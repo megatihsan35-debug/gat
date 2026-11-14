@@ -23,6 +23,7 @@ BAAR 3101 Architectural Design 5, Section 8, KAED IIUM — Megat Muhammad Ihsan.
 
 ## Skills in this repo
 - `.claude/skills/diagram-design/` — Cathryn Lavery's diagram-design skill (MIT, copied from github.com/cathrynlavery/diagram-design, v2.6). Use it for concept, site-analysis, circulation, programme and process diagrams: one self-contained HTML + SVG file per diagram.
+- 29 architecture skills from Abhinav Bhardwaj's Skills-Architects (MIT, github.com/Abhinavbwj/Skills-Architects, licence in `LICENSE-skills-architects`): design theory, concept design, building programming/typology, spatial planning, envelope, structure, building services, daylighting, acoustics, materials, sustainability, codes, fire safety, accessibility, construction documentation, `architect-calculator` (Python calculators) and country dossiers. There is NO Malaysia dossier — for local rules use UBBL 1984 / MS 1184 (accessibility) / MS 1525 (energy) and say so; `country-singapore` is the closest reference.
 
 ## Gotchas
 - Scripts use absolute paths under `/home/claude/...` (the original cloud workspace). Images, fonts, renders, PDFs and DAE files are NOT in this repo (too big) — re-generate or re-upload them.
