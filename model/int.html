@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;overflow:hidden;background:#fff}</style></head><body>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {RectAreaLightUniformsLib} from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import * as K from './kit.js';
+import {SCENES} from './scenes.js?v=1';
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w')||1920), H = +(q.get('h')||1200), line = q.get('mode')==='line';
+RectAreaLightUniformsLib.init();
+const R = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true}); R.setSize(W,H); R.setPixelRatio(1); document.body.appendChild(R.domElement);
+R.outputColorSpace = THREE.SRGBColorSpace; R.toneMapping = line ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene(); const root = new THREE.Group(); scene.add(root); K.setRoot(root, line);
+const S = SCENES[q.get('s')];
+const cfg = S.build(K, THREE) || {};
+R.toneMappingExposure = cfg.exposure ?? 1.0;
+const cam = new THREE.PerspectiveCamera(cfg.fov ?? 62, W/H, 0.05, 400); cam.position.copy(K.V(...cfg.eye)); cam.lookAt(K.V(...cfg.tgt));
+if (line) { scene.background = new THREE.Color(0xffffff); R.render(scene, cam); }
+else {
+  const pm = new THREE.PMREMGenerator(R); scene.environment = pm.fromScene(new RoomEnvironment(R), 0.04).texture;
+  scene.background = new THREE.Color(cfg.bg ?? '#d9dde0');
+  scene.add(new THREE.HemisphereLight(new THREE.Color(cfg.sky ?? '#ffffff'), new THREE.Color(cfg.gnd ?? '#8a8070'), cfg.hemi ?? 0.6));
+  if (cfg.sun) { const s = new THREE.DirectionalLight(new THREE.Color(cfg.sun[3]||'#fff4e0'), cfg.sun[4]??1.5); s.position.copy(K.V(cfg.sun[0],cfg.sun[1],cfg.sun[2])); scene.add(s); }
+  const rt = new THREE.WebGLRenderTarget(W, H, {type: THREE.HalfFloatType, samples: 4});
+  const C = new EffectComposer(R, rt); C.addPass(new RenderPass(scene, cam));
+  C.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), cfg.bloom?.[0] ?? 0.55, cfg.bloom?.[1] ?? 0.5, cfg.bloom?.[2] ?? 0.9));
+  C.addPass(new OutputPass()); C.render();
+}
+window.__done = true;
+</script></body></html>

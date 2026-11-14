@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;overflow:hidden;background:transparent}</style></head><body>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {ColladaLoader} from 'three/addons/loaders/ColladaLoader.js';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w')||1600), H = +(q.get('h')||1000), mode = q.get('mode')||'color';
+const num = s => s.split(',').map(Number);
+const V = (x,y,z) => new THREE.Vector3(x, z, -y);
+const eye = num(q.get('eye')), tgt = num(q.get('tgt'));
+const hide = (q.get('hide')||'').split('|').filter(Boolean);
+const edges = q.get('edges') !== '0';
+const R = new THREE.WebGLRenderer({antialias:true, alpha:true, preserveDrawingBuffer:true});
+R.setSize(W,H); R.setPixelRatio(1); document.body.appendChild(R.domElement);
+R.outputColorSpace = THREE.SRGBColorSpace; R.toneMapping = (mode==='color'||mode==='night') ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping; R.toneMappingExposure = +(q.get('exp')||1.05);
+R.shadowMap.enabled = mode !== 'mask' && mode !== 'floor'; R.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+let cam;
+if (q.get('ortho')) { const h = +q.get('ortho'); cam = new THREE.OrthographicCamera(-h*W/H, h*W/H, h, -h, 0.1, 2000); }
+else cam = new THREE.PerspectiveCamera(+(q.get('fov')||35), W/H, 0.3, 3000);
+cam.position.copy(V(...eye)); cam.lookAt(V(...tgt));
+if (mode === 'mask' || mode === 'floor') scene.background = new THREE.Color(0x000000); else R.setClearColor(0x000000, 0);
+// palette remap (illustration look)
+const PAL = {
+ 'TT Lawn':'#B9CDA0','TT Planting':'#9DBA86','TT Tree canopy':'#A3C08F','TT Tree trunk':'#8C7A63','TT Plaza granite':'#EFE7D8','TT Path paving':'#F1ECE2',
+ 'TT Court paving':'#F2EAD9','TT Asphalt':'#CDD0D1','TT Line paint white':'#FFFFFF','TT Context':'#F6F5F2','TT Tennis court':'#C8D8C6','TT River':'#BBD4DC',
+ 'TT Podium stone':'#ECE6DA','TT Render white':'#FAF8F4','TT Render interior':'#F7F4EF','TT Slab white':'#F5F3EF','TT Roof metal white':'#F5F5F2','TT Ribbon white':'#FDFDFC',
+ 'TT PTFE membrane':'#FFFFFF','TT Concrete':'#D9D6D0','TT Terracotta lamella':'#C4673F','TT Crown terracotta':'#B8492E','TT PV panel':'#3E5568','TT Timber deck':'#D7B48C',
+ 'TT Glass':'#B3D0DA','TT Rubber play':'#EBB591','TT OKU blue':'#6E97C4','TT Aluminium':'#8A9095','TT Steel dark':'#5F666B'};
+const toHide = o => hide.some(h => (o.name||'').startsWith(h));
+const loader = new ColladaLoader();
+loader.load(q.get('dae'), c => {
+  const root = c.scene; scene.add(root); root.updateMatrixWorld(true);
+  const kill = []; root.traverse(o => { if (o !== root && toHide(o)) kill.push(o); });
+  kill.forEach(o => o.parent && o.parent.remove(o));
+  const lines = [];
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const nm = mats.map(m => m.name);
+    if (mode === 'mask') { o.material = new THREE.MeshBasicMaterial({color:0xffffff, side:THREE.DoubleSide}); return; }
+    if (mode === 'floor') { const walk = nm.some(n => /Podium stone|Court paving|Plaza granite|Path paving|Timber deck|Rubber play|Terrazzo|Timber oak|Porcelain|Carpet|Vinyl|Epoxy|Lawn/.test(n));
+      o.material = new THREE.MeshBasicMaterial({color: walk ? 0xffffff : 0x000000, side:THREE.DoubleSide}); return; }
+    const nmat = mats.map(m => {
+      const key = m.name; const col = PAL[key] ? new THREE.Color(PAL[key]) : (m.color ? m.color.clone().lerp(new THREE.Color('#ffffff'), 0.25) : new THREE.Color('#eeeeee'));
+      const glass = /Glass|PTFE/.test(key);
+      const mm = new THREE.MeshStandardMaterial({color:col, roughness:0.92, metalness:0, side:THREE.DoubleSide, transparent:glass, opacity: /Glass/.test(key)?+(q.get('go')||0.42):(/PTFE/.test(key)?+(q.get('po')||0.88):1), depthWrite:!glass});
+      if (mode === 'night' && /Glass/.test(key)) { mm.emissive = new THREE.Color('#FFC874'); mm.emissiveIntensity = 1.4; mm.opacity = 0.9; }
+      mm.name = key; return mm; });
+    o.material = Array.isArray(o.material) ? nmat : nmat[0];
+    const glassy = nm.some(n => /Glass|Tree canopy|PTFE|Line paint/.test(n));
+    o.castShadow = !nm.some(n => /Glass|PTFE/.test(n)); o.receiveShadow = true;
+    if (edges && !glassy && o.geometry.attributes.position.count < 400000) {
+      const eg = new THREE.EdgesGeometry(o.geometry, 32);
+      const l = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({color: mode==='night' ? 0x2a3550 : 0x4d555a, transparent:true, opacity: +(q.get('lo')||0.55)}));
+      l.matrixAutoUpdate = false; l.matrix.copy(o.matrixWorld); lines.push(l);
+    }
+  });
+  lines.forEach(l => scene.add(l));
+  if (mode !== 'mask' && mode !== 'floor') {
+    const pm = new THREE.PMREMGenerator(R); scene.environment = pm.fromScene(new RoomEnvironment(R), 0.04).texture;
+    scene.environmentIntensity = mode==='night' ? 0.12 : 0.55;
+    scene.add(new THREE.HemisphereLight(mode==='night'?0x6070a0:0xffffff, mode==='night'?0x202030:0xd9d0bf, mode==='night'?0.35:1.0));
+    const s = new THREE.DirectionalLight(mode==='night'?0x8090c0:0xfff1dc, mode==='night'?0.35:+(q.get('sun')||2.4));
+    const sd = num(q.get('sundir')||'40,-60,70'); const c0 = V(...tgt);
+    s.position.copy(c0.clone().add(V(...sd))); s.target.position.copy(c0); scene.add(s); scene.add(s.target);
+    s.castShadow = true; s.shadow.mapSize.set(4096,4096); const sc = s.shadow.camera; const e = +(q.get('sh')||110);
+    sc.left=-e; sc.right=e; sc.top=e; sc.bottom=-e; sc.near=1; sc.far=600; s.shadow.bias=-0.0004; s.shadow.normalBias=0.03; s.shadow.radius=3;
+  }
+  R.render(scene, cam);
+  window.__done = true;
+}, undefined, e => { console.log('ERR', e); });
+</script></body></html>

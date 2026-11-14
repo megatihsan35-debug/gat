@@ -1,0 +1,119 @@
+<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:linear-gradient(180deg,#bcd3e2 0%,#e3ecef 55%,#f2efe7 100%)}</style>
+</head><body>
+<script src="scene.js"></script>
+<script type="module">
+import * as THREE from './node_modules/three/build/three.module.js';
+const SC = window.SCENE; const V = new URLSearchParams(location.search).get('v') || '1';
+const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true, preserveDrawingBuffer: true});
+renderer.setSize(1920, 1080); renderer.setPixelRatio(1); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.fog = new THREE.Fog(0xe9eeee, 160, 520);
+const W = (x, y, z) => new THREE.Vector3(x, z, -y);           // world (x east, y north, z up) -> three
+const M = {
+  site: [0xE7E2D6], plaza: [0xE2D2B4], grass: [0x9DBB7A], asphalt: [0x70767B], stone: [0xD3CCBD], court: [0xE9DDC8],
+  wall: [0xF2EDE5], white: [0xF8F7F3], planter: [0x7FA559], fin: [0xB55A33], steel: [0x3A3F44], grey: [0xCDD2D6], membrane: [0xFBFBFA, 0.82],
+  wood: [0xC49A6C], play: [0xE7A57D], ctx: [0xE6E6E2], tennis: [0x4F7C5C], water: [0x6FA3B5], glass: [0x8FB9CE, 0.42], ribbon: [0xFBFBFB], crown: [0xB4492B]};
+const mats = {};
+for (const k in M) { const [c, o] = M[k]; mats[k] = new THREE.MeshStandardMaterial({color: c, roughness: k === 'glass' ? 0.08 : 0.85, metalness: k === 'glass' ? 0.2 : 0.0, transparent: o !== undefined, opacity: o ?? 1, side: THREE.DoubleSide}); }
+const edgeMat = new THREE.LineBasicMaterial({color: 0x2c2c2c, transparent: true, opacity: 0.33});
+function addEdges(mesh, thr = 28) { const e = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, thr), edgeMat); e.position.copy(mesh.position); e.rotation.copy(mesh.rotation); scene.add(e); }
+// extrusions
+for (const it of SC.items) {
+  const sh = new THREE.Shape(it.outer.map(p => new THREE.Vector2(p[0], p[1])));
+  for (const h of it.holes) sh.holes.push(new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
+  const g = new THREE.ExtrudeGeometry(sh, {depth: Math.max(0.01, it.z1 - it.z0), bevelEnabled: false, curveSegments: 4});
+  const m = new THREE.Mesh(g, mats[it.m]); m.rotation.x = -Math.PI / 2; m.position.y = it.z0;
+  m.castShadow = !['glass', 'site', 'plaza', 'asphalt', 'water', 'tennis', 'court', 'play'].includes(it.m); m.receiveShadow = true; scene.add(m);
+  if (it.e && it.m !== 'glass') addEdges(m);
+}
+// big ground
+const gnd = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({color: 0xA9BF8A, roughness: 1}));
+gnd.rotation.x = -Math.PI / 2; gnd.position.y = -0.02; gnd.receiveShadow = true; scene.add(gnd);
+// fins (instanced)
+{ const geo = new THREE.BoxGeometry(0.09, 1, 0.5); const im = new THREE.InstancedMesh(geo, mats.fin, SC.fins.length); const o = new THREE.Object3D();
+  SC.fins.forEach((f, i) => { const [x, y, b, z0, z1] = f; o.position.copy(W(x, y, (z0 + z1) / 2)); o.rotation.set(0, -b * Math.PI / 180, 0); o.scale.set(1, z1 - z0, 1); o.updateMatrix(); im.setMatrixAt(i, o.matrix); });
+  im.castShadow = true; im.receiveShadow = true; scene.add(im); }
+// L1 ribbon roof (sector with rising slope) + PV + trusses
+{ const L = SC.L1, B = SC.B, n = 60, m = 10; const pos = [], idx = [];
+  const zf = r => L.z0 + (r - L.r0) / (L.r1 - L.r0) * (L.z1 - L.z0);
+  for (let i = 0; i <= n; i++) for (let j = 0; j <= m; j++) { const b = (L.b0 + (L.b1 - L.b0) * i / n) * Math.PI / 180; const r = L.r0 + (L.r1 + 0.8 - L.r0) * j / m;
+    const v = W(B[0] + Math.sin(b) * r, B[1] + Math.cos(b) * r, zf(Math.min(r, L.r1)) + (r > L.r1 ? 0.15 : 0)); pos.push(v.x, v.y, v.z); }
+  for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) { const a = i * (m + 1) + j, b2 = a + m + 1; idx.push(a, b2, a + 1, b2, b2 + 1, a + 1); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  const top = new THREE.Mesh(g, mats.white); top.castShadow = true; top.receiveShadow = true; scene.add(top);
+  const under = top.clone(); under.position.y = -0.9; scene.add(under);
+  // fascia
+  const fp = []; for (let i = 0; i <= n; i++) { const b = (L.b0 + (L.b1 - L.b0) * i / n) * Math.PI / 180; const r = L.r1 + 0.8;
+    const a1 = W(B[0] + Math.sin(b) * r, B[1] + Math.cos(b) * r, zf(L.r1) + 0.15), a2 = W(B[0] + Math.sin(b) * r, B[1] + Math.cos(b) * r, zf(L.r1) - 0.75); fp.push(a1, a2); }
+  const fg = new THREE.BufferGeometry(); const fpos = []; const fidx = [];
+  fp.forEach(v => fpos.push(v.x, v.y, v.z)); for (let i = 0; i < n; i++) { const a = 2 * i; fidx.push(a, a + 2, a + 1, a + 2, a + 3, a + 1); }
+  fg.setAttribute('position', new THREE.Float32BufferAttribute(fpos, 3)); fg.setIndex(fidx); fg.computeVertexNormals(); scene.add(new THREE.Mesh(fg, mats.white));
+  const pvm = new THREE.MeshStandardMaterial({color: 0x2B4660, roughness: 0.35, metalness: 0.3});
+  for (let r = L.r0 + 1.2; r < L.r1 - 1.0; r += 2.2) for (let b = L.b0 + 3; b < L.b1 - 4; b += 5.5) {
+    const bb = (b + 2) * Math.PI / 180, rr = r + 0.9; const p = W(B[0] + Math.sin(bb) * rr, B[1] + Math.cos(bb) * rr, zf(rr) + 0.08);
+    const pv = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.05, 3.6 * rr / 15), pvm); pv.position.copy(p); pv.rotation.set(0, -bb, 0);
+    pv.rotation.x = 0; pv.lookAt(W(B[0], B[1], zf(rr) + 0.08)); pv.rotateX(Math.atan2(L.z1 - L.z0, L.r1 - L.r0) * 0); scene.add(pv); }
+  const tm = mats.steel;
+  for (let b = SC.mph.b0 + 3; b < SC.mph.b1; b += 6) { const bb = b * Math.PI / 180;
+    for (const [r1, r2, dz1, dz2] of [[L.r0, L.r1, -0.95, -0.95], [L.r0, L.r1, -2.0, -2.0]]) {
+      const a = W(B[0] + Math.sin(bb) * r1, B[1] + Math.cos(bb) * r1, zf(r1) + dz1), c = W(B[0] + Math.sin(bb) * r2, B[1] + Math.cos(bb) * r2, zf(r2) + dz2);
+      const len = a.distanceTo(c); const mm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, len), tm); mm.position.copy(a.clone().add(c).multiplyScalar(0.5)); mm.lookAt(c); scene.add(mm); }
+    for (let k = 0; k < 8; k++) { const r1 = L.r0 + (L.r1 - L.r0) * k / 8, r2 = L.r0 + (L.r1 - L.r0) * (k + 1) / 8;
+      const a = W(B[0] + Math.sin(bb) * r1, B[1] + Math.cos(bb) * r1, zf(r1) + (k % 2 ? -0.95 : -2.0)), c = W(B[0] + Math.sin(bb) * r2, B[1] + Math.cos(bb) * r2, zf(r2) + (k % 2 ? -2.0 : -0.95));
+      const len = a.distanceTo(c); const mm = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, len), tm); mm.position.copy(a.clone().add(c).multiplyScalar(0.5)); mm.lookAt(c); scene.add(mm); } }
+}
+// ribbons (twisting canopies)
+function ribbon(pts, w, zfn, mat, twist = 12, thick = 0.22) {
+  const curve = new THREE.CatmullRomCurve3(pts.map((p, i) => new THREE.Vector3(p[0], p[1], 0)), false, 'centripetal');
+  const N = 80, pos = [], idx = [];
+  for (let i = 0; i <= N; i++) { const t = i / N; const p = curve.getPoint(t), tg = curve.getTangent(t); const nx = -tg.y, ny = tg.x;
+    const z = zfn(t), tw = Math.sin(t * Math.PI * 2) * twist * Math.PI / 180;
+    for (const s of [-1, 1]) for (const dz of [0, -thick]) { const v = W(p.x + nx * s * w / 2, p.y + ny * s * w / 2, z + s * Math.sin(tw) * w / 2 + dz); pos.push(v.x, v.y, v.z); } }
+  for (let i = 0; i < N; i++) { const a = i * 4, b = a + 4;
+    idx.push(a, b, a + 2, b, b + 2, a + 2, a + 1, a + 3, b + 1, b + 1, a + 3, b + 3, a, a + 1, b, b, a + 1, b + 1, a + 2, b + 2, a + 3, b + 2, b + 3, a + 3); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; scene.add(m); addEdges(m, 40);
+  for (const t of [0.12, 0.42, 0.72]) { const p = curve.getPoint(t); const z = zfn(t);
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, z, 10), mats.steel); c.position.copy(W(p.x, p.y, z / 2)); c.castShadow = true; scene.add(c); }
+  return curve;
+}
+for (const r of SC.ribbons) ribbon(r.pts, r.w, t => 3.6 + 1.5 * Math.sin(Math.PI * t * 0.9) + 1.3 * t, mats.ribbon);
+// crown
+for (const c of SC.crown) { const cv = new THREE.CatmullRomCurve3(c.map(p => W(p[0], p[1], p[2])));
+  const m = new THREE.Mesh(new THREE.TubeGeometry(cv, 60, 0.45, 12, false), mats.crown); m.castShadow = true; scene.add(m); }
+// trees
+const trunk = new THREE.MeshStandardMaterial({color: 0x6B5B45, roughness: 1}); const leaf = new THREE.MeshStandardMaterial({color: 0x6E9A4E, roughness: 1, flatShading: true});
+for (const [x, y, dd] of SC.trees) { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.22, 3.6, 8), trunk); t.position.copy(W(x, y, 1.8 + (Math.hypot(x - SC.B[0], y - SC.B[1]) < 2 ? 0.9 : 0))); t.castShadow = true; scene.add(t);
+  const c = new THREE.Mesh(new THREE.IcosahedronGeometry(dd / 2, 1), leaf); c.position.copy(W(x, y, 3.6 + dd / 2.6 + (Math.hypot(x - SC.B[0], y - SC.B[1]) < 2 ? 0.9 : 0))); c.scale.set(1, 0.8, 1); c.castShadow = true; scene.add(c); }
+// people
+const pcol = [0x2F3B45, 0x8A3B2B, 0x3E5A6E, 0x6B4E7A, 0xC9A227, 0x40604A];
+SC.people.forEach(([x, y, z], i) => { const m = new THREE.MeshStandardMaterial({color: pcol[i % pcol.length], roughness: 0.9});
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 1.25, 8), m); b.position.copy(W(x, y, z + 0.63)); b.castShadow = true; scene.add(b);
+  const h = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), new THREE.MeshStandardMaterial({color: 0x7A5A44})); h.position.copy(W(x, y, z + 1.42)); scene.add(h); });
+// MPH interior props (cooking demo)
+{ const B = SC.B; for (const [b, r] of [[104, 15.5], [116, 15.5]]) { const bb = b * Math.PI / 180;
+    const c = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.9, 0.8), mats.wood); c.position.copy(W(B[0] + Math.sin(bb) * r, B[1] + Math.cos(bb) * r, 5.4 + 0.45)); c.rotation.y = -bb + Math.PI / 2; scene.add(c); }
+  for (let k = 0; k < 18; k++) { const b = (100 + (k % 6) * 4) * Math.PI / 180, r = 18.0 + Math.floor(k / 6) * 1.1;
+    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.45, 8), mats.steel); s.position.copy(W(B[0] + Math.sin(b) * r, B[1] + Math.cos(b) * r, 5.62)); scene.add(s); } }
+// lights
+scene.add(new THREE.HemisphereLight(0xe6eef4, 0xb9ab8f, 1.15));
+const sun = new THREE.DirectionalLight(0xfff3e0, 2.4); const sb = SC.B;
+sun.position.copy(W(sb[0] + 60, sb[1] + 35, 80)); sun.target.position.copy(W(sb[0], sb[1], 0)); scene.add(sun.target);
+sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); const sc = sun.shadow.camera; sc.left = -110; sc.right = 110; sc.top = 110; sc.bottom = -110; sc.near = 1; sc.far = 400; sun.shadow.bias = -0.0004; scene.add(sun);
+// cameras
+const B = SC.B, d = b => [Math.sin(b * Math.PI / 180), Math.cos(b * Math.PI / 180)];
+const P = (b, r, z) => W(B[0] + d(b)[0] * r, B[1] + d(b)[1] * r, z);
+const views = {
+  '1': [W(B[0] + 78, B[1] - 88, 68), W(B[0] - 6, B[1] + 4, 2), 34],
+  '2': [W(105, -11, 1.7), W(B[0] + 14, B[1] + 2, 7.0), 58],
+  '3': [P(215, 7.6, 2.5), P(32, 11, 6.2), 74],
+  '4': [P(127, 14.6, 7.0), P(78, 21, 7.6), 72],
+  '5': [P(212, 15.0, 7.0), P(300, 17, 8.6), 64],
+  '6': [W(B[0] - 70, B[1] + 75, 55), W(B[0] - 8, B[1] + 2, 3), 36],
+};
+const [cp, ct, fov] = views[V];
+const cam = new THREE.PerspectiveCamera(fov, 1920 / 1080, 0.3, 1200); cam.position.copy(cp); cam.lookAt(ct);
+renderer.render(scene, cam); window.__done = true;
+</script></body></html>

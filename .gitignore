@@ -1,0 +1,11 @@
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.dae
+*.skp
+*.woff2
+*.dxf
+out/
+node_modules/
+__pycache__/
