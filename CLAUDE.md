@@ -21,6 +21,9 @@ BAAR 3101 Architectural Design 5, Section 8, KAED IIUM — Megat Muhammad Ihsan.
 - Mock-up: 1:500, 2 mm greyboard = 1 m contour layer, 5 mm foam for the building. Contours were traced from the user's example-model photo (`mockup/H.npy` = photo→site homography) — approximate.
 - Room areas must be read from the A1 plan text, not guessed (gallery 54 m², first aid 18 m²).
 
+## Skills in this repo
+- `.claude/skills/diagram-design/` — Cathryn Lavery's diagram-design skill (MIT, copied from github.com/cathrynlavery/diagram-design, v2.6). Use it for concept, site-analysis, circulation, programme and process diagrams: one self-contained HTML + SVG file per diagram.
+
 ## Gotchas
 - Scripts use absolute paths under `/home/claude/...` (the original cloud workspace). Images, fonts, renders, PDFs and DAE files are NOT in this repo (too big) — re-generate or re-upload them.
 - `boards/build_dc*.py` publish to a claude.ai Design canvas; images there must be `/_blob/<id>` URLs.
