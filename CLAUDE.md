@@ -14,9 +14,11 @@ BAAR 3101 Architectural Design 5, Section 8, KAED IIUM — Megat Muhammad Ihsan.
 | `model/` | Geometry of the design, A1 drawings (PDF/DXF), SketchUp/DAE exports, interior model | `geom.py` (all key geometry), `site_el.py` (road, trees, ribbons, plaza), `skp_build.py` (3D massing → DAE), `interior_build.py`, `draw.py` / `draw2.py` (A1 sheets) |
 | `render3d/` | three.js renders of the DAE files (hero, exploded axo, masks) | `render.html` (URL params: dae, eye, tgt, fov/ortho, mode, hide…), `shot.js` (Playwright screenshot) |
 | `boards/` | Crit 1 A3 presentation boards | Current set = **5 landscape sheets** `s1.py`–`s5.py` (1587×1123 px), rendered by `render_land.py` + `shotl.js`; shared helpers `content.py`; hero/axo collage scripts in `py/`; true-scale crops from the A1 PDF via `crops3.py` (`img/truescale.json` holds sizes). `p1.py`–`p4.py` = older 4-sheet portrait set; `board1.py`/`board2.py` = first 2-sheet version |
+| `v2/` | **Post-Crit-1 scheme** (one centre, 3 floors, wave roof, façade A fins, tennis-court land added). Review page + 3D model | `scheme.py` (ALL v2 geometry: site, centre C, radii, levels, spines, zones, programme), `drawings.py` (SVG plans/sections/elevations + 3D data), `viewer.js`, `page.py` → `titik-temu-v2-review.html` |
 | `mockup/` | 1:500 mock-up model kit, 20 A4 pages (PDF) | `run.py` → `kit.py` (site layer pages), `kit2.py` (building pieces), `kit3.py` (cover, overview, assembly); `terrain.py` (9 contour layers), `building.py` (pieces B1–B10, crown, ribbons) |
 
 ## Key decisions (don't undo without asking)
+- v2 (15 Nov 2026, after Crit 1): ONE radial centre C (pole of the buildable area of the site incl. the tennis-court land); concave gates under convex hanging upper floors; 3 floors; wave roof high at Selatan + Utara gates (+16.2), low at Tengah + Timur (+10.2); mast +30 m; façade option A (vertical fins opening at the gates). v1 (`model/`) is the Crit 1 design.
 - Boards: all text uppercase; drawings at TRUE scale on A3 (plans/sections/elevations 1:200, site plan 1:500); A3 landscape, 5 sheets.
 - Mock-up: 1:500, 2 mm greyboard = 1 m contour layer, 5 mm foam for the building. Contours were traced from the user's example-model photo (`mockup/H.npy` = photo→site homography) — approximate.
 - Room areas must be read from the A1 plan text, not guessed (gallery 54 m², first aid 18 m²).
