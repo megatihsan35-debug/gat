@@ -343,25 +343,42 @@ def fit(D, fl, color=INK):
         elif k == 'G10':
             bm, b0, b1 = M.mid(k); D.poly(LineString([P(19.6, bm), P(22.3, bm)]).buffer(1.1, cap_style=2), 'A-FIXT', edge=color, lw=0.08, ls='--')
 
-PLAY = (20.0, 95.0)
-def court_tables():
-    out = []
-    for r, n in ((7.0, 10), (4.4, 6)):
-        span_ = 360 - (PLAY[1] - PLAY[0]) - 16
-        for i in range(n): out.append(P(r, PLAY[1] + 8 + span_ * (i + 0.5) / n))
-    return out
+import landscape as LS
+PLAY = LS.PLAY
 def court_fit(D, color):
-    """brief B3: open seating for 100 (16 tables of 6 + 4 counter seats), children's play 30 m2, hand wash 15 (G33)"""
-    play = SC.sector(*PLAY).intersection(SC.ann(3.3, R_COURT - 0.3))
+    """brief B3: open seating for 100 (curved communal 'talam' tables + benches in the planter fronts), children's play 30 m2,
+    hand wash 15 (G33). Inner ring of pocket gardens (Taman Teduh) on the court rim."""
+    play = LS.play_poly()
     D.poly(play, 'A-FURN', fill='#EAF3E1', edge=color, lw=0.1, ls='--', z=2)
-    p = P(6.0, sum(PLAY) / 2); D.text(p, f"CHILDREN'S PLAY\nSOFT RUBBER\n{play.area:.0f} m²", 'A-AREA', size=1.6, color=color, halo=True, z=9)
-    for q in court_tables():
-        D.circle(q, 0.6, 'A-FURN', fill='white', edge=color, lw=0.09, z=3)
-        for j in range(6): D.circle(q + np.array([math.cos(j * math.pi / 3), math.sin(j * math.pi / 3)]) * 0.95, 0.18, 'A-FURN', edge=color, lw=0.07, z=3)
-    D.poly(SC.ann(7.9, 8.5).intersection(SC.sector(352, 8)), 'A-FURN', fill='white', edge=color, lw=0.09, z=3)
-    for b in (354, 358, 2, 6): D.circle(P(7.45, b), 0.18, 'A-FURN', edge=color, lw=0.07, z=3)
-    D.text(P(5.6, 205), 'TALAM COURT · OPEN SEATING\n16 TABLES x 6 + 4 COUNTER = 100', 'A-AREA', size=1.7, color=color, halo=True, z=9)
+    p = P(5.6, sum(PLAY) / 2); D.text(p, f"CHILDREN'S PLAY\nSOFT RUBBER\n{play.area:.0f} m²", 'A-AREA', size=1.6, color=color, halo=True, z=9)
+    for a, b in LS.TABLES:
+        D.poly(LS.ann_sec(*LS.TABLE_R, a, b), 'A-FURN', fill='white', edge=color, lw=0.1, z=3)
+        for rr in (LS.BENCH_T_IN, LS.BENCH_T_OUT): D.poly(LS.ann_sec(*rr, a, b), 'A-FURN', fill='#F4F1EA', edge=color, lw=0.08, z=3)
+    for a, b in LS.INNER:
+        D.poly(LS.ann_sec(*LS.POCKET_IN_R, a, b), 'L-PLNT', fill='#DDE8D3', edge='#3E7D3A' if color == INK else color, lw=0.13, z=3.4)
+        D.poly(LS.ann_sec(*LS.BENCH_IN_R, a, b), 'A-FURN', fill='#F4F1EA', edge=color, lw=0.08, z=3.4)
+    st = LS.seats()
+    D.text(P(6.2, 212), f"TALAM COURT · OPEN SEATING {st['total']}\n{st['table_inner'] + st['table_outer']} AT TALAM TABLES + {st['pocket_benches']} ON GARDEN BENCHES", 'A-AREA', size=1.6, color=color, halo=True, z=9)
+    a, b = LS.INNER[-1]; D.text(P(9.9, (a + b) / 2), 'TAMAN TEDUH\n(INNER RING)', 'L-PLNT', size=1.3, color='#3E7D3A' if color == INK else color, halo=True, z=9)
     D.text(P(1.9, 300), 'TITIK POOL\nWATER +0.720', 'A-AREA', size=1.4, color=color, halo=True, z=9)
+
+def landscape_overlay(D, fl, color=None):
+    """canopies, gate + outer pockets (GF), sky pockets (L1). On GF the canopy is overhead (dashed) and only its columns land."""
+    import siteplan as ST
+    leaf = '#3E7D3A' if not color else color
+    if fl == 'GF':
+        for c in LS.CANOPIES: ST.canopy_plan(D, c, solid=False, color=color)
+        ST.pockets_plan(D, inner=False, gate=True, outer=True, color=color)
+        for g in ST.GATE[:1]:
+            p = polylabel(g['poly'], 0.1); D.text((p.x, p.y), 'TAMAN\nGERBANG', 'L-PLNT', size=1.2, color=leaf, halo=True, z=9)
+        c = [k for k in LS.CANOPIES if k['main']][0]
+        D.text(LS.xy(c, 20.0, 0.0), 'ANYAMAN CANOPY OVER\n(HANGS FROM L1, U/S +3.55 TO +3.75)', 'L-CANP', size=1.4, color=color or '#7A6A4A', halo=True, z=9, rot=0)
+    elif fl == 'L1':
+        for q in LS.SKY: D.poly(q, 'L-PLNT', fill='#DDE8D3', edge=leaf, lw=0.13, z=3.4)
+        if LS.SKY:
+            q = max(LS.SKY, key=lambda g: g.area); p = polylabel(q, 0.05)
+            D.text((p.x, p.y), 'SKY POCKET', 'L-PLNT', size=1.2, color=leaf, halo=True, z=9)
+        for c in LS.CANOPIES: ST.canopy_plan(D, c, solid=True, color=color, region=SC.disc(M.R_L1).symmetric_difference(SC.disc(80)))
 
 # ------------------------------------------------------------------------------------------------ stairs + lifts
 def draw_core(D, c, fl, color=INK, show_text=True):
@@ -522,6 +539,7 @@ def plan_drawing(fl, mode='arch'):
     if fl in ('GF', 'L1'): draw_s4(D, fl, color=ink)
     fit(D, fl, color=ink if not base else '#B5BCC4')
     if fl == 'GF': court_fit(D, ink if not base else '#B5BCC4')
+    if fl in ('GF', 'L1'): landscape_overlay(D, fl, None if not base else '#B5BCC4')
     room_tags(D, fl, color=ink)
     level_tag(D, P(R_COURT - 1.5, 160) if fl == 'GF' else P(R_BR1 + 1.4, 300 if fl != 'L2' else 122), f'FFL +{FFL[fl]:.3f}', color=ink)
     if not base:

@@ -3,7 +3,7 @@ parking and the utility block. All geometry in site metres."""
 import math
 import numpy as np
 from shapely.geometry import Polygon, Point, LineString, MultiPolygon, box
-from shapely.ops import unary_union
+from shapely.ops import unary_union, polylabel
 from shapely import affinity
 from cad import Drawing, INK
 import plan3 as M
@@ -88,6 +88,7 @@ def roof_drawing():
     D.text(plans.frame(c2['bc'], 0, (c2['v_s0'] + c2['v_s1']) / 2), 'CORE 2 TANK ROOM\nBELOW ROOF, FL +12.900\nCOLD WATER TANK 7.2 M³', 'P-EQPT', size=1.6, color=BLUE, halo=True)
     D.poly(Polygon([plans.frame(c2['bc'], -0.4, c2['v_s1'] - 0.9), plans.frame(c2['bc'], 0.4, c2['v_s1'] - 0.9), plans.frame(c2['bc'], 0.4, c2['v_s1'] - 0.1), plans.frame(c2['bc'], -0.4, c2['v_s1'] - 0.1)]), 'A-ROOF', fill='white', edge=INK, lw=0.18, z=6)
     D.text(plans.frame(c2['bc'], 1.3, c2['v_s1'] - 0.5), 'ROOF\nHATCH', 'A-ANNO', size=1.3, ha='left', halo=True)
+    for c in LS.CANOPIES: canopy_plan(D, c, solid=True, region=SC.disc(80).difference(SC.disc(R_ROOF)))
     plans.grid(D, 'RF', color='#B9C0C7'); plans.section_marks(D)
     D.circle(C, 0.25, 'M-ELEC', edge=MAG, lw=0.2, z=7)
     D.text(C + np.array([1.2, 1.0]), 'MAST +30.000 · AIR TERMINAL', 'M-ELEC', size=1.4, color=MAG, ha='left', halo=True)
@@ -150,17 +151,51 @@ def forecourts():
 
 # external drainage + sewer (site plan + plumbing)
 PERIM_DRAIN_R = 27.4
+PROM_R = (R_GF + 1.5, 30.7)               # perimeter promenade (paved) round the building; buried services run under it
+SEWER_R, WATER_R, HR_R, LV_R = 28.7, 29.4, 29.9, 30.3
 def sewer_runs():
     """IC = inspection chamber. East line takes the toilet stacks + staff restrooms; north line takes the cafe (via grease
     trap); west line takes the musolla wudhu stack and the shop sinks. All fall to MH-S on the south road (public sewer)."""
     mh_s = along(S_ROAD, s_at_x(S_ROAD, 80.0), 2.0)
-    east = [P(31.0, 50), P(31.0, 75), P(31.0, 105), P(31.0, 135), P(31.5, 160), mh_s]
-    north = [P(31.0, 350), P(31.0, 20), P(31.0, 50)]
-    west = [P(31.0, 300), P(31.0, 268), P(31.0, 235), P(31.0, 205), mh_s]
+    R = SEWER_R
+    east = [P(R, 50), P(R, 75), P(R, 105), P(R, 135), P(R, 160), mh_s]
+    north = [P(R, 350), P(R, 20), P(R, 50)]
+    west = [P(R, 300), P(R, 268), P(R, 235), P(R, 205), mh_s]
     return dict(east=east, north=north, west=west, mh=mh_s)
 SEWER = sewer_runs()
 OSD = rect_on(S_ROAD, s_at_x(S_ROAD, 47.0), s_at_x(S_ROAD, 53.0), 6.5, 10.0)
 WATER_IN = along(E_ROAD, 63.0, -0.5)
+ASSEMBLY = P(36.5, 147.0)
+def service_lines():
+    """buried service routes (site metres): used for drawing and to keep pocket gardens off them"""
+    return dict(
+        water=[along(E_ROAD, 60.0, 13.0), P(WATER_R, 100), P(WATER_R, 75), P(WATER_R, 20), P(WATER_R, 345), P(R_GF, 339)],
+        hr=[along(E_ROAD, 61.0, 13.0), P(HR_R, 103), P(HR_R, 93)],
+        lv=[along(E_ROAD, 65.0, 13.0), P(LV_R, 104), P(LV_R, 84.0), P(R_GF, 84.0)],
+        outfall=[P(PERIM_DRAIN_R, 228), np.array(OSD.centroid.coords[0]), along(S_ROAD, s_at_x(S_ROAD, 50.0), -1.0)])
+SERVICE_LINES = service_lines()
+import landscape as LS
+_avoid_cols = unary_union([AISLE, HS_S, HS_E, YARD] + [k for _, k in PARK] + MOTOR + BIKES)
+for _c in LS.CANOPIES: LS.place_columns(_c, _avoid_cols)
+LS.COL_FP = unary_union([Point(q['base']).buffer(0.6) for c in LS.CANOPIES for q in LS.column_pts(c)])
+def _outer_exclude():
+    g = [SC.strip(s['b'], s['w'] + 2.0, R_GF - 1.0, 95).buffer(1.0) for s in SC.SPINES]
+    g += [LS.CANOPY_FP.buffer(1.0), LS.COL_FP, HS_E.buffer(0.5), HS_S.buffer(0.5), YARD.buffer(0.5), DRIVE_E.buffer(0.5), AISLE.buffer(0.8),
+          TERRACE.buffer(1.0), UB.buffer(1.5), OSD.buffer(0.5), Point(ASSEMBLY).buffer(3.0)]
+    g += [k.buffer(0.8) for _, k in PARK] + [k.buffer(0.8) for k in MOTOR + BIKES] + [Point(p).buffer(1.5) for p, _ in HYDRANTS]
+    g += [LineString(v).buffer(1.0) for v in SERVICE_LINES.values()] + [LineString(SEWER[k]).buffer(1.0) for k in ('east', 'north', 'west')]
+    g += [Point(WATER_IN).buffer(1.5)]
+    return unary_union(g)
+OUTER = LS.outer_pockets(_outer_exclude())
+GATE = LS.gate_pockets()
+def pocket_trees():
+    """one shade tree in every outer pocket of 14 m2 or more (at its pole of inaccessibility)"""
+    out = []
+    for q in OUTER:
+        if q.area >= 14.0:
+            p = polylabel(q, 0.1); out.append(np.array([p.x, p.y]))
+    return out
+POCKET_TREES = pocket_trees()
 
 def site_drawing(services=True):
     D = Drawing('SITE PLAN')
@@ -189,6 +224,8 @@ def site_drawing(services=True):
         e = np.array(SC.spine_end(s['b']).coords[0])
         arrow(D, C + d(s['b']) * (rad(e) - 3), C + d(s['b']) * (R_L1 + 1), 'A-ANNO', '#7A6A4A', lw=0.13, head=0.7)
         D.text(C + d(s['b']) * (rad(e) - 7.0) + tdir(s['b']) * (s['w'] / 2 + 2.2), f"{s['k']} FORECOURT\nRAMP 1:{(rad(e) - 6 - R_BR0) / 0.9:.0f} TO +0.900", 'A-ANNO', size=1.8, color='#7A6A4A', halo=True)
+    D.poly(SC.ann(*PROM_R).intersection(SITE), 'A-SITE', fill='#EFEAE0', edge='#C9BFAA', lw=0.09, z=1.1)
+    D.text(P(PROM_R[1] - 1.2, 205), 'PERIMETER PROMENADE', 'A-ANNO', size=1.4, color='#7A6A4A', rot=-(205 - 90) + 180, halo=True)
     D.poly(SC.disc(R_GF + 1.5), 'A-SITE', fill='#F7F3EA', edge='#B3A88F', lw=0.18, z=1.2)
     D.poly(TERRACE, 'A-SITE', fill='#F7F3EA', edge='#B3A88F', lw=0.18, z=1.2)
     D.text(P(S4['v1'] + 1.5, 284.5), 'ARRIVAL GARDEN\nTERRACE +0.900\n5 STEPS + 1:12 RAMP', 'A-ANNO', size=1.6, halo=True)
@@ -198,6 +235,7 @@ def site_drawing(services=True):
     D.poly(SC.disc(R_COURT), 'A-SITE', fill='#FBF6E9', edge=INK, lw=0.18, z=3); D.circle(C, R_POOL, 'A-SITE', fill='#D8ECF7', edge=INK, lw=0.13, z=3.1)
     D.poly(ROOF_FP, 'A-ROOF', fill=None, edge=INK, lw=0.35, ls='--', z=4); D.circle(C, R_DISC, 'A-ROOF', edge=INK, lw=0.18, ls='--', z=4)
     D.poly(S4['poly'], 'A-STRS', fill='white', edge=INK, lw=0.13, z=3.5)
+    landscape_plan(D, site=True)
     D.text(C + np.array([0, -5.0]), 'TITIK TEMU\nGF +0.900 · L1 +5.400 · L2 +9.600\nROOF +10.200 TO +16.200 · MAST +30.000', 'A-ANNO', size=2.2, weight='bold', halo=True)
     # utility block + yard + hardstandings + parking
     D.poly(YARD, 'A-SITE', fill='#E6E8EB', edge='#7A8590', lw=0.13, z=1.5)
@@ -220,7 +258,7 @@ def site_drawing(services=True):
         a, b, t, _ = edge(i); L = np.linalg.norm(b - a)
         for k in range(nt):
             p = a + t * L * (k + 0.5) / nt + inward(i) * 2.0
-            if any(g.buffer(1.5).contains(Point(p)) for g in [AISLE, YARD, HS_S, UB] + [g for _, g in forecourts()] + [g for _, g in PARK]): continue
+            if any(g.buffer(1.5).contains(Point(p)) for g in [AISLE, YARD, HS_S, UB, LS.CANOPY_FP] + [g for _, g in forecourts()] + [g for _, g in PARK] + OUTER): continue
             D.circle(p, 2.2, 'A-LAND', fill='#DDE8D3', edge=GREEN, lw=0.09, z=1.8)
     if services: site_services(D)
     return D
@@ -235,14 +273,14 @@ def site_services(D):
     arrow(D, along(S_ROAD, s_at_x(S_ROAD, 71.0), -4.0), along(S_ROAD, s_at_x(S_ROAD, 71.0), 2.5), 'F-ESCP', RED, lw=0.35, head=1.0)
     for p, nm in HYDRANTS:
         D.circle(p, 0.6, 'F-EQPT', fill=RED, edge=None, z=9); D.text(p + np.array([1.0, 0.0]), f'{nm} PILLAR HYDRANT\n(TWIN 65 MM OUTLETS)', 'F-EQPT', size=1.4, color=RED, ha='left', halo=True)
-    D.poly(Point(P(31.0, 170)).buffer(0.6), 'F-EQPT', fill=None, edge=RED, lw=0.2)
-    D.text(P(32.5, 170), 'FIRE ASSEMBLY\nPOINT', 'F-EQPT', size=1.4, color=RED, ha='left', halo=True)
+    D.poly(Point(ASSEMBLY).buffer(0.6), 'F-EQPT', fill=None, edge=RED, lw=0.2)
+    D.text(ASSEMBLY + np.array([1.2, 0.0]), 'FIRE ASSEMBLY\nPOINT', 'F-EQPT', size=1.4, color=RED, ha='left', halo=True)
     # perimeter drain + OSD + outfall
     D.circle(C, PERIM_DRAIN_R, 'P-RAIN', edge=CYAN, lw=0.35, z=5)
     D.text(P(PERIM_DRAIN_R + 0.8, 130), '300 U-DRAIN WITH\nGRATING, 1:200 FALL', 'P-RAIN', size=1.4, color=CYAN, ha='left', halo=True)
     D.poly(OSD, 'P-RAIN', fill='#D8ECF7', edge=CYAN, lw=0.2, ls='--', z=5)
     D.text(np.array(OSD.centroid.coords[0]) + np.array([0, -0.2]), 'OSD TANK\n(UNDERGROUND)', 'P-RAIN', size=1.3, color=CYAN, halo=True)
-    D.line([P(PERIM_DRAIN_R, 228), np.array(OSD.centroid.coords[0]), along(S_ROAD, s_at_x(S_ROAD, 50.0), -1.0)], 'P-RAIN', lw=0.35, color=CYAN, z=5)
+    D.line(SERVICE_LINES['outfall'], 'P-RAIN', lw=0.35, color=CYAN, z=5)
     D.text(along(S_ROAD, s_at_x(S_ROAD, 50.0), -2.6), 'OUTFALL TO ROADSIDE DRAIN', 'P-RAIN', size=1.4, color=CYAN, halo=True)
     # sewer
     for k in ('east', 'north', 'west'):
@@ -250,17 +288,54 @@ def site_services(D):
         for q in pts[:-1]: D.poly(Point(q).buffer(0.45, cap_style=3), 'P-SANI', fill='white', edge=BROWN, lw=0.18, z=6)
     D.poly(Point(SEWER['mh']).buffer(0.7, cap_style=3), 'P-SANI', fill=BROWN, edge=None, z=6)
     D.text(SEWER['mh'] + np.array([1.2, 0.8]), 'MH · CONNECT TO IWK\nPUBLIC SEWER', 'P-SANI', size=1.4, color=BROWN, ha='left', halo=True)
-    D.poly(Point(P(31.0, 350)).buffer(0.7, cap_style=3), 'P-SANI', fill='#E8D7C3', edge=BROWN, lw=0.2, z=6)
-    D.text(P(33.2, 350), 'GREASE TRAP\n(CAFE KITCHEN)', 'P-SANI', size=1.4, color=BROWN, ha='left', halo=True)
+    D.poly(Point(P(SEWER_R, 350)).buffer(0.7, cap_style=3), 'P-SANI', fill='#E8D7C3', edge=BROWN, lw=0.2, z=6)
+    D.text(P(SEWER_R + 2.2, 350), 'GREASE TRAP\n(CAFE KITCHEN)', 'P-SANI', size=1.4, color=BROWN, ha='left', halo=True)
     # water + power + gas-free kitchen
     D.circle(WATER_IN, 0.45, 'P-CWAT', fill=BLUE, edge=None, z=8)
     D.text(WATER_IN + np.array([1.0, 0]), 'SPAN WATER METER\nØ50 INCOMING', 'P-CWAT', size=1.4, color=BLUE, ha='left', halo=True)
     ub_c = np.array(UB.centroid.coords[0])
     D.line([WATER_IN, along(E_ROAD, 63.0, 8.0)], 'P-CWAT', lw=0.3, color=BLUE, z=5)
-    D.line([along(E_ROAD, 60.0, 13.0), P(31.8, 100), P(31.8, 75), P(31.8, 20), P(31.8, 345), P(R_GF, 339)], 'P-CWAT', lw=0.3, color=BLUE, z=5)
-    D.text(P(32.8, 25), 'Ø50 RISING MAIN TO TANK\nON CORE 2', 'P-CWAT', size=1.4, color=BLUE, ha='left', halo=True)
-    D.line([along(E_ROAD, 61.0, 13.0), P(32.4, 103), P(32.4, 93)], 'F-EQPT', lw=0.3, color=RED, z=5, ls='--')
-    D.text(P(33.4, 98), 'Ø80 HOSE REEL MAIN', 'F-EQPT', size=1.4, color=RED, ha='left', halo=True)
+    D.line(SERVICE_LINES['water'], 'P-CWAT', lw=0.3, color=BLUE, z=5)
+    D.text(P(WATER_R + 1.0, 25), 'Ø50 RISING MAIN TO TANK\nON CORE 2', 'P-CWAT', size=1.4, color=BLUE, ha='left', halo=True)
+    D.line(SERVICE_LINES['hr'], 'F-EQPT', lw=0.3, color=RED, z=5, ls='--')
+    D.text(P(HR_R + 1.0, 98), 'Ø80 HOSE REEL MAIN', 'F-EQPT', size=1.4, color=RED, ha='left', halo=True)
     D.line([along(E_ROAD, 65.0, 6.0), along(E_ROAD, 65.0, -0.5)], 'M-ELEC', lw=0.3, color=MAG, z=5)
-    D.line([along(E_ROAD, 65.0, 13.0), P(33.0, 104), P(33.0, 84.0), P(R_GF, 84.0)], 'M-ELEC', lw=0.3, color=MAG, z=5, ls=':')
-    D.text(P(34.0, 108), 'LV CABLE IN DUCT TO MDB', 'M-ELEC', size=1.4, color=MAG, halo=True)
+    D.line(SERVICE_LINES['lv'], 'M-ELEC', lw=0.3, color=MAG, z=5, ls=':')
+    D.text(P(LV_R + 1.0, 108), 'LV CABLE IN DUCT TO MDB', 'M-ELEC', size=1.4, color=MAG, halo=True)
+
+
+# ------------------------------------------------------------------------------------------------ canopies + pocket gardens (plans)
+LEAF = '#DDE8D3'; LEAF_E = GREEN; RIB = '#9C845A'
+def canopy_plan(D, c, solid=False, color=None, region=None, lw=0.07):
+    """canopy in plan: outline, edge beams, lattice ribs. region = shapely area to keep (e.g. outside the roof)"""
+    col = color or RIB
+    out = LS.outline(c)
+    keep = out if region is None else out.intersection(region)
+    if keep.is_empty: return
+    D.poly(keep, 'L-CANP', fill='#F4EBD8' if solid else None, edge=col, lw=0.18, ls='-' if solid else '--', z=2.6)
+    for rib in LS.ribs(c):
+        ln = LineString([LS.xy(c, s_, t_) for s_, t_ in rib]).intersection(keep)
+        for g in getattr(ln, 'geoms', [ln]):
+            if g.geom_type == 'LineString' and g.length > 0.05: D.line(list(g.coords), 'L-CANP', lw=lw, color=col, ls='-' if solid else '--', z=2.7)
+    for q in LS.column_pts(c):
+        D.circle(q['base'], 0.18, 'L-CANP', fill=col, edge=None, z=2.8)
+        for tp in q['tops']: D.line([q['base'], tp], 'L-CANP', lw=0.13, color=col, z=2.8)
+
+def pockets_plan(D, inner=True, gate=True, outer=True, color=None, labels=True):
+    e = color or LEAF_E
+    if outer:
+        for q in OUTER: D.poly(q, 'L-PLNT', fill=LEAF, edge=e, lw=0.13, z=2.2)
+        for p in POCKET_TREES:
+            D.circle(p, 2.0, 'L-PLNT', fill=None, edge=e, lw=0.09, z=2.3); D.circle(p, 0.15, 'L-PLNT', fill=e, edge=None, z=2.3)
+        if labels and OUTER:
+            big = max(OUTER, key=lambda q: q.area); p = polylabel(big, 0.1)
+            D.text((p.x, p.y - 2.6), 'TAMAN ULAM', 'L-PLNT', size=1.4, color=e, weight='bold', halo=True, z=9)
+    if gate:
+        for g in GATE: D.poly(g['poly'], 'L-PLNT', fill=LEAF, edge=e, lw=0.13, z=2.4)
+    if inner:
+        for a, b in LS.INNER:
+            D.poly(LS.ann_sec(*LS.POCKET_IN_R, a, b), 'L-PLNT', fill=LEAF, edge=e, lw=0.13, z=3.4)
+
+def landscape_plan(D, site=False):
+    for c in LS.CANOPIES: canopy_plan(D, c, solid=True, region=None if site else None)
+    pockets_plan(D, inner=False)

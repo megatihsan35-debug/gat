@@ -74,6 +74,8 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
         <button id="v-court" data-view="court">Talam court</button>
         <button id="v-tengah" data-view="tengah">Tengah gate</button>
         <button id="v-top" data-view="top">Top down</button>
+        <button id="v-canopy" data-view="canopy">Under the canopy</button>
+        <button id="v-garden" data-view="garden">Garden ring</button>
       </div>
     </div>
     <div class="grp">
@@ -94,6 +96,8 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
         <button id="t-fins" data-grp="fins" aria-pressed="true">Façade fins</button>
         <button id="t-glass" data-grp="glass" aria-pressed="true">Glass</button>
         <button id="t-site" data-grp="site" aria-pressed="true">Site + trees</button>
+        <button id="t-canopy" data-grp="canopy" aria-pressed="true">Canopies</button>
+        <button id="t-garden" data-grp="garden" aria-pressed="true">Pocket gardens</button>
       </div>
     </div>
     <div class="grp">
@@ -147,10 +151,13 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     court:  { pos: [6.0, 2.4, 6.0], tgt: [0, 11.4, 0], fov: 72 },
     tengah: { pos: [-38, 1.65, 22], tgt: [0, 6.5, 0], fov: 60 },
     top:    { pos: [0, 120, 0.01], tgt: [0, 0, 0],  fov: 40 },
+    canopy: { pos: [-1.4, 1.65, 29.5], tgt: [0.2, 3.6, 0], fov: 64 },
+    garden: { pos: [-44, 9, -26], tgt: [-26, 1, -12], fov: 50 },
   };
   const GROUPS = {
     roof: ['A-ROOF', 'A-FASCIA', 'A-FUNNEL'], fins: ['A-FIN'], glass: ['A-GLAZ', 'A-BALU'],
     site: ['SITE-LAWN', 'SITE-PAVING', 'SITE-ROAD', 'SITE-TREE', 'SITE-TRUNK', 'A-UTIL'],
+    canopy: ['L-CANP-RIB', 'L-CANP-PANEL', 'L-CANP-GLASS', 'L-CANP-COL'], garden: ['L-PLANTER', 'L-SOIL', 'L-PLANT'],
   };
   const nodes = {};
   function setView(name) {

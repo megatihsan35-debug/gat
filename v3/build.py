@@ -21,6 +21,7 @@ FL_NAME = {'GF': 'GROUND FLOOR PLAN', 'L1': 'FIRST FLOOR PLAN', 'L2': 'SECOND FL
 ARCH_LEGEND = [('fill', dict(fill=INK), 'WALL CUT (RC / BLOCKWORK, PLASTERED)'), ('line', dict(lw=0.3), 'GLAZING (FULL HEIGHT)'),
                ('circle', dict(fill=INK, r=1.6), 'COLUMN Ø350 RC'), ('line', dict(lw=0.15, color='#7A8590', ls='-.'), 'STRUCTURAL GRID (RADIAL / RING)'),
                ('line', dict(lw=0.25, ls='--'), 'LINE OVER / SLAB EDGE'), ('text', dict(t='D2'), 'DOOR TYPE (SEE A-600)'),
+               ('line', dict(lw=0.3, ls='--', color='#9C845A'), 'ANYAMAN CANOPY OVER (LATTICE)'), ('fill', dict(fill='#DDE8D3', edge='#3E7D3A'), 'POCKET GARDEN, 450 SEAT WALL'),
                ('text', dict(t='FD60', size=1.5), 'FIRE DOOR, 60 MIN, SELF-CLOSING'), ('fill', dict(fill='#F6F7F8', edge='#9AA3AD'), 'RING BRIDGE (OPEN WALKWAY)')]
 
 def area_table(D, x, y, fl):

@@ -9,7 +9,7 @@ from plan3 import C, P, d, tdir, SC, ROOMS, FFL, CORES, S4
 from cad import Drawing, INK
 import sheets as SH
 from sheets import new_sheet, notes_block, legend_block, north, scale_bar, drawing_title, key_plan, wrap, ACCENT
-import plans, sections as SE, siteplan as ST, services as SV
+import plans, sections as SE, siteplan as ST, services as SV, landscape as LS
 GREYT = '#6B7480'
 
 # --------------------------------------------------------------------------------------------- table helper (paper mm)
@@ -131,6 +131,14 @@ def elevations_sheet(no, views):
     return S, dx
 
 # --------------------------------------------------------------------------------------------- F-000 fire strategy
+def canopy_hs_clear():
+    c = [k for k in LS.CANOPIES if k['main']][0]; worst = 99.0
+    for s_ in np.arange(c['R_in'], c['R_out'], 0.1):
+        for t in np.linspace(-1, 1, 21):
+            p = LS.xy(c, s_, t)
+            if ST.HS_S.contains(Point(p)): worst = min(worst, LS.z_top(c, s_, t) - (0.4 if abs(t) > 0.95 else LS.rib_depth(c, s_)) - SE.ground_z(p))
+    return worst
+
 def fire_strategy_sheet(no='F-000'):
     title = 'FIRE STRATEGY + CALCULATIONS'
     S, F, x0, y = new_sheet(no, title, 'NTS @ A0')
@@ -181,7 +189,8 @@ def fire_strategy_sheet(no='F-000'):
             ('KITCHEN', 'HOOD WITH WET-CHEMICAL SUPPRESSION, SHUNT-TRIP OF COOKING POWER, 1 HR EXHAUST SHAFT'),
             ('FIRE APPLIANCE ACCESS', f'2 HARDSTANDINGS 6 M WIDE, {(ST.HS_E.area + ST.HS_S.area) / 6:.0f} M TOTAL, ≈ 1/3 OF THE PERIMETER (BY-LAW 140)'),
             ('HYDRANTS', '2 PILLAR HYDRANTS ON THE PUBLIC MAINS, ≤ 30 M FROM THE HARDSTANDINGS'),
-            ('ASSEMBLY POINT', 'SOUTH-EAST LAWN BY THE SELATAN FORECOURT (SEE A-001)')]
+            ('ASSEMBLY POINT', 'SOUTH-EAST LAWN BY THE SELATAN FORECOURT (SEE A-001)'),
+            ('ENTRANCE CANOPIES', f'NON-COMBUSTIBLE (STEEL, ALUMINIUM, GLASS); OPEN-SIDED, SO NO SMOKE TRAP; ≥ {canopy_hs_clear():.1f} M CLEAR OVER\nTHE SOUTH HARDSTANDING (≥ 4.5 M), NO COLUMNS ON IT (SELATAN CANOPY CANTILEVERS)')]
     y3 = table(D, 390, y2 - 2, [('ITEM', 62, 'left'), ('PROVISION', 128, 'left')], rows, title='4  CLASSIFICATION + ACTIVE / PASSIVE PROVISION', size=1.6, lh=3.0)
     # mini escape diagram: the three plates with stairs
     Dd = Drawing('diag')
@@ -220,7 +229,9 @@ def plumbing_calc_sheet(no='P-000'):
             ('EXTERNAL SEWER', 'uPVC Ø150 AT 1:100 IN 3 LINES (E, N, W) TO MH-S → IWK PUBLIC SEWER (SOUTH ROAD)'),
             ('GREASE TRAP', 'PRECAST, 2-CHAMBER, OUTSIDE THE CAFE KITCHEN (NORTH)'),
             ('RAINWATER', f'{rc["n"]} RWDP Ø150 ({rc["per"]:.1f} L/S EACH) → 300 U-DRAIN → OSD → ROADSIDE DRAIN'),
-            ('POOL', 'OCULUS RAIN + MAKE-UP WATER; 2 x Ø150 OVERFLOW; RECIRCULATION PLANT IN PUMP ROOM')]
+            ('POOL', 'OCULUS RAIN + MAKE-UP WATER; 2 x Ø150 OVERFLOW; RECIRCULATION PLANT IN PUMP ROOM'),
+            ('CANOPIES', 'EDGE-BEAM GUTTERS → RWDP IN V-COLUMNS (OUTSIDE) / HANGERS TO THE GATE DRAINS (INSIDE)'),
+            ('POCKET GARDENS', 'DRIP IRRIGATION ON A TIMER FROM THE CW RING; OUTER RING = BIORETENTION RAIN GARDENS\n(SUBSOIL DRAIN TO THE PERIMETER U-DRAIN, MSMA)')]
     y1 = table(D, 30, y1 - 2, [('DRAINAGE', 50, 'left'), ('', 132, 'left')], rows, title='4  SANITARY + RAINWATER')
     # schematic (paper mm): vertical cold water riser diagram
     X0, Y0 = 420, 520; lv = {'GF': 0, 'L1': 75, 'L2': 140, 'TR': 200}
@@ -288,7 +299,8 @@ def schedules_sheet(no='A-600'):
     for g in sorted(groups):
         for fl, k, nm, req, net in groups[g]:
             rows.append((g, fl, k, nm[:44], f'{req}', f'{net:.1f}', 'OK' if net >= req - 0.05 else 'SHORT'))
-    extra = [('B3', 'GF', 'COURT', 'OPEN SEATING (100) IN TALAM COURT', '100 P', '100 P', 'OK'), ('B3', 'GF', 'COURT', "CHILDREN'S PLAY", '30', f"{SC.sector(*plans.PLAY).intersection(SC.ann(3.3, M.R_COURT - 0.3)).area:.0f}", 'OK'),
+    st = LS.seats()
+    extra = [('B3', 'GF', 'COURT', 'OPEN SEATING IN TALAM COURT (TABLES + GARDEN BENCHES)', '100 P', f"{st['total']} P", 'OK' if st['total'] >= 100 else 'SHORT'), ('B3', 'GF', 'COURT', "CHILDREN'S PLAY", '30', f"{LS.play_poly().area:.0f}", 'OK' if LS.play_poly().area >= 30 else 'SHORT'),
              ('D1', 'GF', 'GATE', 'COVERED ARRIVAL (SELATAN GATE UNDER L1)', '50', f"{SC.strip(182.7, 8.0, M.R_BR1, M.R_L1).intersection(SC.disc(M.R_L1)).area:.0f}", 'OK'),
              ('E', 'EXT', 'UB', 'REFUSE WET / DRY, GENSET, SUCTION TANK, PUMPS', '18/18/15/15', '18/18/15/15', 'OK'), ('F', 'EXT', 'PARK', 'STAFF 5 + OKU 1 + MOTOR 10 + BIKE 10', '5+1+10+10', f'{sum(1 for k, _ in ST.PARK if k == "S")}+1+{len(ST.MOTOR)}+{len(ST.BIKES)}', 'OK')]
     y1 = table(D, 30, 805, [('BRIEF', 12, 'left'), ('FL', 10, 'left'), ('NO.', 14, 'left'), ('ROOM', 84, 'left'), ('BRIEF M²', 20, 'right'), ('NET M²', 18, 'right'), ('', 14, 'right')],
@@ -301,6 +313,14 @@ def schedules_sheet(no='A-600'):
     gl = [('G1', 'CURTAIN WALL, DGU 6 LOW-E + 12 + 6 HS, U ≤ 2.0, SHGC ≤ 0.35 (MS 1525)', 'L1/L2 FACADE BEHIND FINS'), ('G2', 'SHOPFRONT 12 MM TOUGHENED, FRAMELESS', 'GF SHOPS, CAFE'),
           ('G3', 'FIXED GLAZED SCREEN 10.38 LAMINATED', 'ADMIN, GALLERY SIDES'), ('G4', 'BALUSTRADE 17.52 LAMINATED, 1100 HIGH', 'RING BRIDGE, DECK EDGES')]
     y2 = table(D, 400, y2 - 2, [('TYPE', 12, 'left'), ('SPECIFICATION', 100, 'left'), ('WHERE', 64, 'left')], gl, title='4  GLAZING', size=1.6)
+    st = LS.seats()
+    rows = [('INNER RING · GF COURT RIM', f'{len(LS.INNER)}', f"{sum(LS.ann_sec(*LS.POCKET_IN_R, a, b).area for a, b in LS.INNER):.0f}", wrap(LS.PALETTE['INNER'][1], 52)),
+            ('INNER RING · L1 SKY POCKETS', f'{len(LS.SKY)}', f"{sum(q.area for q in LS.SKY):.0f}", wrap('AS INNER RING, IN 600-DEEP TROUGHS ON THE FIRST-FLOOR DECK BY THE RING BRIDGE (C&S TO ALLOW 12 KN/M²)', 52)),
+            ('GATE GARDENS · UNDER THE HANGING L1', f'{len(ST.GATE)}', f"{sum(g['poly'].area for g in ST.GATE):.0f}", wrap(LS.PALETTE['GATE'][1], 52)),
+            ('OUTER RING · TAMAN ULAM', f'{len(ST.OUTER)}', f"{sum(q.area for q in ST.OUTER):.0f}", wrap(LS.PALETTE['OUTER'][1], 52))]
+    y2 = table(D, 400, y2 - 2, [('POCKET GARDENS', 52, 'left'), ('NO.', 10, 'right'), ('M²', 12, 'right'), ('PLANTING', 100, 'left')], rows, title='5  LANDSCAPE: POCKET GARDENS', size=1.5, lh=2.7)
+    rows = [(c['k'], f"{c['R_out'] - c['R_in']:.1f}", f"{2 * c['hw_in']:.1f} → {2 * LS.hw(c, c['R_out']):.1f}", f"+{LS.Z_IN0 + LS.RISE_IN:.2f} → +{c['z_out'] + LS.RISE_OUT:.2f}", f"{len(c['cols']) * 2}") for c in LS.CANOPIES]
+    y2 = table(D, 400, y2 - 2, [('CANOPY', 30, 'left'), ('LENGTH M', 26, 'right'), ('WIDTH M', 40, 'right'), ('CROWN LEVEL', 44, 'right'), ('V-COLS', 22, 'right')], rows, title='6  ANYAMAN ENTRANCE CANOPIES (COURT EDGE → SETBACK LINE)', size=1.6)
     drawing_title(D, (40, 30), 'S', title, None, 'AREAS ARE NET (INSIDE WALL FACES) MEASURED FROM THE PLAN MODEL')
     finish(S, F, D, no, title, 'NTS', None, None, y, x0)
     return S, []
@@ -413,6 +433,47 @@ def detail_stair():
     _dim(D, (g * 1.0, h), (g * 1.0, 2 * h), 0.15, '173')
     return D
 
+def detail_canopy():
+    """1:50 cross-section through the Selatan canopy just outside the gate (local x = offset from the axis)"""
+    D = Drawing('DET 7'); c = [k for k in LS.CANOPIES if k['main']][0]; s_ = c['R_gate'] + 1.2
+    hw = LS.hw(c, s_); ts = np.linspace(-1, 1, 41)
+    top = [(t * hw, LS.z_top(c, s_, t)) for t in ts]
+    D.line(top, 'L-CANP', lw=0.35)
+    D.line([(x, z - LS.rib_depth(c, s_)) for x, z in top], 'L-CANP', lw=0.18)
+    for t in np.linspace(-1, 1, 9):
+        x, z = t * hw, LS.z_top(c, s_, t); D.poly(box(x - 0.04, z - LS.rib_depth(c, s_), x + 0.04, z), 'S-DETL', fill='#9C845A', edge=None)
+    for sg in (-1, 1):
+        x = sg * hw; z = LS.z_edge(c, s_); D.poly(box(x - 0.08, z - 0.4, x + 0.08, z), 'S-DETL', fill='#9C845A', edge=INK, lw=0.1)
+        D.poly(box(x - 0.07 if sg > 0 else x - 0.0, z - 0.12, x + 0.0 if sg > 0 else x + 0.07, z), 'P-RAIN', fill='#D8ECF7', edge=None)
+    gz = SE.ground_z(LS.xy(c, s_, 0)); D.line([(-hw - 1.5, gz), (hw + 1.5, gz)], 'A-SITE', lw=0.3)
+    man = lambda x: (D.circle((x, gz + 1.58), 0.12, 'A-ANNO', edge=INK, lw=0.1), D.poly(box(x - 0.17, gz, x + 0.17, gz + 1.42), 'A-ANNO', edge=INK, lw=0.1))
+    man(-1.2); man(1.6)
+    z0 = LS.z_top(c, s_, 0)
+    lead(D, (0, z0), (0.6, z0 + 0.45), 'COVER: ALTERNATE DIAMONDS OF 3 MM PERFORATED ALUMINIUM\n(CHAMPAGNE PVDF, SONGKET PERFORATION) + 12.76 FRITTED\nLAMINATED GLASS, ON EPDM GASKETS')
+    lead(D, (-hw * 0.5, LS.z_top(c, s_, -0.5) - 0.15), (-hw - 0.2, z0 - 1.2), 'ANYAMAN RIBS 60 x 250 STEEL FLAT,\nALUMINIUM-CLAD, 2 DIAGONAL FAMILIES @ 1500,\nLINEAR LED ON EVERY 2ND RIB', 'right')
+    lead(D, (hw, LS.z_edge(c, s_) - 0.2), (hw - 1.2, LS.z_edge(c, s_) - 1.6), 'EDGE BEAM 160 x 400 WITH\nINTEGRAL GUTTER → RWDP IN\nV-COLUMN / HANGER', 'right')
+    _dim(D, (-hw, gz - 0.4), (hw, gz - 0.4), -0.25, f'{2 * hw * 1000:.0f} WIDE AT THIS POINT')
+    D.text((0, gz + 0.5), f'CLEAR ≥ {LS.z_edge(c, s_) - 0.4 - gz:.2f} M AT THE EDGE', 'A-ANNO', size=1.6)
+    return D
+
+def detail_planter():
+    """1:20 section through a pocket garden planter with its bench (outer ring type; inner ring the same without the tree pit)"""
+    D = Drawing('DET 8')
+    D.poly(box(0.0, 0.0, 0.2, 0.45), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.2)
+    D.poly(box(-0.45, 0.40, 0.2, 0.45), 'A-ELEV', fill='#B59B6A', edge=INK, lw=0.1)
+    D.poly(box(1.4, 0.0, 1.6, 0.45), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.2)
+    D.poly(box(0.2, -0.6, 1.4, 0.38), 'L-PLNT', fill='#B9A27C', edge=None)
+    D.poly(box(0.2, -0.9, 1.4, -0.6), 'L-PLNT', fill='#D9D2C3', edge=INK, lw=0.1)
+    D.poly(box(-0.6, -1.0, 2.0, -0.9), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.1)
+    D.line([(-0.6, 0.0), (0.0, 0.0)], 'A-SITE', lw=0.3); D.line([(1.6, 0.0), (2.2, 0.0)], 'A-SITE', lw=0.3)
+    for x in (0.5, 0.8, 1.1): D.line([(x, 0.38), (x - 0.1, 0.9), (x + 0.1, 1.0)], 'L-PLNT', lw=0.15, color='#3E7D3A')
+    lead(D, (-0.2, 0.43), (-0.3, 1.3), 'ALUMINIUM SEAT SLATS\nON 450 SEAT WALL', 'right')
+    lead(D, (0.8, -0.1), (1.8, 0.25), 'SOIL 600-900\n(TREE PIT 1200)')
+    lead(D, (0.8, -0.75), (1.8, -0.55), 'FILTER SAND +\nGRAVEL, Ø100\nSUBSOIL DRAIN')
+    lead(D, (1.5, 0.2), (1.8, 0.95), 'RC WALL 200,\nGRANITE FACED')
+    _dim(D, (0.0, -1.2), (1.6, -1.2), -0.1, '1600 TYP. (INNER RING 1000)')
+    return D
+
 def details_sheet(no='A-500'):
     title = 'DETAILS'
     S, F, x0, y = new_sheet(no, title, 'AS SHOWN @ A0')
@@ -428,12 +489,16 @@ def details_sheet(no='A-500'):
     d2 = detail_rwdp(); S.place(d2, 10, (0.0, 0.0), (480, 300))
     drawing_title(side, (360, 205), '2', 'DOWNPIPE IN FIN CASING (PLAN)', 10)
     d4 = detail_pool(); S.place(d4, 20, (0.0, 0.0), (860, 300))
-    drawing_title(side, (690, 215), '4', 'TITIK POOL + MAST BASE', 20)
+    drawing_title(side, (690, 238), '4', 'TITIK POOL + MAST BASE', 20)
     d5 = detail_stair(); S.place(d5, 20, (0.0, 0.0), (380, 60))
     drawing_title(side, (560, 40), '5', 'STAIR FLIGHT (CORES 1-3)', 20)
+    d7 = detail_canopy(); S.place(d7, 50, (0.0, 0.0), (790, 62))
+    drawing_title(side, (690, 26), '7', 'ANYAMAN CANOPY, CROSS-SECTION', 50, 'SELATAN GATE, 1.2 M OUTSIDE THE L1 EDGE')
+    d8 = detail_planter(); S.place(d8, 20, (0.0, 0.0), (915, 110))
+    drawing_title(side, (885, 26), '8', 'POCKET GARDEN PLANTER', 20)
     finish(S, F, side, no, title, 'AS SHOWN', None, ['DETAILS ARE DESIGN-INTENT FOR THE 3D MODEL AND THE CRIT; FIXINGS AND SIZES TO BE CONFIRMED BY THE FACADE AND C&S ENGINEERS.',
            'MATERIALS: ALUMINIUM (FINS, FASCIAS, ROOF), GRC (SOFFITS, FUNNEL), GLASS, GRANITE, STAINLESS STEEL. NO BRICK.'], y, x0)
-    return S, [(d1, (0, 0)), (d2, (10, 0)), (d3, (0, 20)), (d4, (40, 20)), (d5, (50, 0))]
+    return S, [(d1, (0, 0)), (d2, (10, 0)), (d3, (0, 20)), (d4, (40, 20)), (d5, (50, 0)), (d7, (70, 0)), (d8, (90, 0))]
 
 # --------------------------------------------------------------------------------------------- M-000 + cover
 def cover_sheet(no='A-000', sheet_list=()):
@@ -454,6 +519,7 @@ def cover_sheet(no='A-000', sheet_list=()):
              'GEOMETRY: ONE CENTRE C; RINGS A R9.5 (BRIDGE INNER), B R12.5, C R23.0 (GF WALL), D R26.5 (L1/L2 EDGE); ROOF EDGE R28.3; COURT R9.0; POOL R2.5.',
              'GATES: TIMUR 27.9°, SELATAN 182.7° (MAIN), TENGAH 242.8°, UTARA 317.7°. WAVE ROOF HIGH AT SELATAN + UTARA (+16.200), LOW AT TIMUR + TENGAH (+10.200).',
              'CODES: UBBL 1984, MS 1184 (ACCESS), MS 1525 (ENERGY), MS 1228 (SEWERAGE), MSMA 2ND ED. (DRAINAGE), SPAN GUIDELINES (WATER), MS IEC 62305 (LIGHTNING).',
+             'ENTRANCE CANOPIES (ANYAMAN LATTICE) RUN FROM THE COURT EDGE THROUGH EACH GATE TO THE SETBACK LINE; POCKET GARDENS FORM AN INNER RING (COURT RIM + L1 SKY POCKETS), GATE GARDENS AND AN OUTER RING (TAMAN ULAM).',
              'SERVICES AND FIRE DRAWINGS ARE DESIGN-STAGE PROPOSALS FOR A STUDENT PROJECT; ENGINEERS AND BOMBA MUST CHECK THEM BEFORE ANY REAL USE.']
     notes_block(D, 600, 300, 'GENERAL NOTES', notes, width=80, size=2.6)
     finish(S, F, D, no, title, 'NTS', None, None, y, x0)

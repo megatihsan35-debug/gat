@@ -10,7 +10,7 @@ from shapely.geometry import Polygon, MultiPolygon, Point, LineString, box
 from shapely.ops import unary_union
 import plan3 as M
 from plan3 import C, P, d, tdir, frame, SC, CORES, S4, FFL, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
-import plans, sections as SE, siteplan as ST
+import plans, sections as SE, siteplan as ST, landscape as LS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out', '3d'); os.makedirs(OUT, exist_ok=True)
@@ -23,6 +23,8 @@ MAT = {
     'A-COLS': ('#E2DFD8', 1.0), 'A-STRS': ('#BDB7AD', 1.0), 'A-BALU': ('#A9CDE0', 0.25), 'A-ROOF': ('#CDD1D6', 1.0),
     'A-ROOF-SOFFIT': ('#E9E5DC', 1.0), 'A-FUNNEL': ('#EAE6DD', 1.0), 'A-MAST': ('#D9CFB4', 1.0), 'A-FIN': ('#A39C88', 1.0),
     'A-FASCIA': ('#3A4048', 1.0), 'A-UTIL': ('#B7BCC2', 1.0), 'A-FURN': ('#8A7F70', 1.0),
+    'L-CANP-RIB': ('#A88B57', 1.0), 'L-CANP-PANEL': ('#D8C69C', 1.0), 'L-CANP-GLASS': ('#CFE3EC', 0.38), 'L-CANP-COL': ('#8E7448', 1.0),
+    'L-PLANTER': ('#C9C1B1', 1.0), 'L-SOIL': ('#6B5A44', 1.0), 'L-PLANT': ('#5E8F4C', 1.0), 'L-PLAY': ('#9DC08A', 1.0),
 }
 
 # ------------------------------------------------------------------------------------------------ mesh helpers
@@ -108,7 +110,7 @@ def build():
     add = lambda k, ms: L[k].extend(ms)
     # ---- site: lawn, roads, paving, plinth, ramps, terrace, pool
     lawn = SC.SITE.difference(SC.disc(R_GF + 1.5)).difference(ST.TERRACE)
-    hard = unary_union([g for _, g in ST.forecourts()] + [ST.YARD, ST.AISLE, ST.HS_S] + [g for _, g in ST.PARK] + ST.MOTOR + ST.BIKES)
+    hard = unary_union([g for _, g in ST.forecourts()] + [ST.YARD, ST.AISLE, ST.HS_S, SC.ann(*ST.PROM_R).intersection(SC.SITE)] + [g for _, g in ST.PARK] + ST.MOTOR + ST.BIKES)
     ramp_zone = unary_union([SC.strip(s['b'], s['w'] + 2.0, R_BR0, 95) for s in SC.SPINES]).intersection(SC.SITE)
     add('SITE-LAWN', flat(lawn.difference(hard).difference(ST.UB), -0.3, 0.0))
     add('SITE-PAVING', flat(hard.difference(ramp_zone).difference(SC.disc(R_GF + 1.5)), -0.3, 0.02))
@@ -195,12 +197,85 @@ def build():
         a, b, t, _ = ST.edge(i); Ln = np.linalg.norm(b - a)
         for k in range(nt):
             p = a + t * Ln * (k + 0.5) / nt + ST.inward(i) * 2.0
-            if any(g.buffer(1.5).contains(Point(p)) for g in [ST.AISLE, ST.YARD, ST.HS_S, ST.UB] + [g for _, g in ST.forecourts()] + [g for _, g in ST.PARK]): continue
+            if any(g.buffer(1.5).contains(Point(p)) for g in [ST.AISLE, ST.YARD, ST.HS_S, ST.UB, LS.CANOPY_FP] + [g for _, g in ST.forecourts()] + [g for _, g in ST.PARK] + ST.OUTER): continue
             add('SITE-TRUNK', cyl(p, 0.15, 0.0, 3.2, 8))
             s = trimesh.creation.icosphere(subdivisions=1, radius=2.4); s.apply_scale((1, 1, 0.8)); s.apply_translation((p[0], p[1], 5.0)); add('SITE-TREE', [s])
-    # ---- court tables (brief B3) as simple discs
-    for q in plans.court_tables(): add('A-FURN', cyl(q, 0.6, 1.62, 1.66, 20) + cyl(q, 0.05, 0.9, 1.62, 6))
+    landscape3d(L)
     return {k: trimesh.util.concatenate(v) for k, v in L.items() if v}
+
+def prism(top_pts, depth, half):
+    """thin plate following a 3D polyline (top edge), hanging 'depth' below it, 2*half thick"""
+    out = []
+    for p0, p1 in zip(top_pts[:-1], top_pts[1:]):
+        p0, p1 = np.array(p0, float), np.array(p1, float); v = p1[:2] - p0[:2]; L_ = np.linalg.norm(v)
+        if L_ < 1e-4: continue
+        n = np.array([-v[1], v[0]]) / L_ * half
+        V = []
+        for p in (p0, p1):
+            for sg in (-1, 1): V += [(p[0] + n[0] * sg, p[1] + n[1] * sg, p[2]), (p[0] + n[0] * sg, p[1] + n[1] * sg, p[2] - depth)]
+        # V: 0 p0- top,1 p0- bot,2 p0+ top,3 p0+ bot,4 p1- top,5 p1- bot,6 p1+ top,7 p1+ bot
+        F = [(0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5), (0, 1, 5), (0, 5, 4), (2, 6, 7), (2, 7, 3), (0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6)]
+        out.append(trimesh.Trimesh(np.array(V), np.array(F), process=False))
+    return out
+
+def rod(p0, p1, r, sections=8):
+    p0, p1 = np.array(p0, float), np.array(p1, float)
+    if np.linalg.norm(p1 - p0) < 1e-3: return []
+    return [trimesh.creation.cylinder(radius=r, segment=[p0, p1], sections=sections)]
+
+def landscape3d(L):
+    # ---- anyaman canopies
+    for c in LS.CANOPIES:
+        ss = np.arange(c['R_in'], c['R_out'] + 1e-6, 0.25); ts = np.linspace(-1, 1, 25)
+        grid = np.array([[(*LS.xy(c, s, t), LS.z_top(c, s, t)) for t in ts] for s in ss])
+        for kind in (True, False):
+            V, F = [], []
+            for i in range(len(ss) - 1):
+                for j in range(len(ts) - 1):
+                    if LS.cell_solid(c, (ss[i] + ss[i + 1]) / 2, (ts[j] + ts[j + 1]) / 2) != kind: continue
+                    n = len(V); V += [grid[i, j], grid[i + 1, j], grid[i + 1, j + 1], grid[i, j + 1]]
+                    F += [(n, n + 1, n + 2), (n, n + 2, n + 3)]
+            if V: L['L-CANP-PANEL' if kind else 'L-CANP-GLASS'].append(trimesh.Trimesh(np.array(V), np.array(F)))
+        for rib in LS.ribs(c, nt=16):
+            pts = [(*LS.xy(c, s, t), LS.z_top(c, s, t) - 0.02) for s, t in rib]
+            L['L-CANP-RIB'] += prism(pts, LS.rib_depth(c, rib[0][0]), 0.03)
+        for side in (-1, 1):
+            pts = [(*LS.xy(c, s, side), LS.z_edge(c, s)) for s in np.arange(c['R_in'], c['R_out'] + 1e-6, 0.5)]
+            L['L-CANP-RIB'] += prism(pts, 0.4, 0.08)
+        for q, z0, z1 in LS.hangers(c): L['L-CANP-RIB'] += rod((q[0], q[1], z0), (q[0], q[1], z1), 0.025)
+        for q in LS.column_pts(c):
+            gz = SE.ground_z(q['base'])
+            for tp, zt in zip(q['tops'], q['ztops']): L['L-CANP-COL'] += rod((q['base'][0], q['base'][1], gz), (tp[0], tp[1], zt - 0.2), 0.11, 12)
+            L['L-CANP-COL'] += cyl(q['base'], 0.3, gz - 0.05, gz + 0.12, 16)
+    # ---- pocket gardens
+    def planter(poly, z0, h=0.45, soil=0.38, wall=0.2, shrubs=True):
+        inner = poly.buffer(-wall)
+        L['L-PLANTER'] += flat(poly.difference(inner), z0, z0 + h)
+        L['L-SOIL'] += flat(inner, z0, z0 + soil)
+        if shrubs and not inner.is_empty:
+            b = inner.bounds; rng = np.random.default_rng(int(abs(b[0] * 7 + b[1] * 13)) % 2**31)
+            for x in np.arange(b[0] + 0.5, b[2], 1.1):
+                for y in np.arange(b[1] + 0.5, b[3], 1.1):
+                    p = (x + rng.uniform(-0.25, 0.25), y + rng.uniform(-0.25, 0.25))
+                    if inner.buffer(-0.3).contains(Point(p)):
+                        r = rng.uniform(0.35, 0.6); s = trimesh.creation.icosphere(subdivisions=1, radius=r)
+                        s.apply_scale((1, 1, rng.uniform(0.7, 1.2))); s.apply_translation((p[0], p[1], z0 + soil + r * 0.6)); L['L-PLANT'].append(s)
+    for q in ST.OUTER: planter(q, 0.0)
+    for p in ST.POCKET_TREES:
+        L['SITE-TRUNK'] += cyl(p, 0.16, 0.3, 3.4, 8)
+        s = trimesh.creation.icosphere(subdivisions=2, radius=2.3); s.apply_scale((1, 1, 0.75)); s.apply_translation((p[0], p[1], 5.0)); L['SITE-TREE'].append(s)
+    for g in ST.GATE:
+        z0 = SE.ground_z(np.array(g['poly'].centroid.coords[0])); planter(g['poly'], z0)
+    for a, b in LS.INNER:
+        planter(LS.ann_sec(*LS.POCKET_IN_R, a, b), 0.9)
+        L['A-FURN'] += flat(LS.ann_sec(*LS.BENCH_IN_R, a, b), 0.9, 1.35)
+    for q in LS.SKY: planter(q, 5.4, h=0.6, soil=0.55, wall=0.15)
+    # ---- Talam court: curved communal tables + benches, play surface
+    for a, b in LS.TABLES:
+        L['A-FURN'] += flat(LS.ann_sec(*LS.TABLE_R, a, b), 0.9 + 0.68, 0.9 + 0.75)
+        L['A-FURN'] += flat(LS.ann_sec(LS.TABLE_R[0] + 0.3, LS.TABLE_R[1] - 0.3, a + 1, b - 1), 0.9, 0.9 + 0.68)
+        for rr in (LS.BENCH_T_IN, LS.BENCH_T_OUT): L['A-FURN'] += flat(LS.ann_sec(*rr, a, b), 0.9, 0.9 + 0.45)
+    L['L-PLAY'] += flat(LS.play_poly(), 0.9, 0.93)
 
 def stairs(c, L):
     """switchback flights as solid steps + landings, matching the plan (13 + 13 risers GF-L1, 12 + 12 L1-L2)"""
@@ -258,6 +333,18 @@ def write_dae(layers, path):
     sc = cscene.Scene('titik-temu-v3', nodes); mesh.scenes.append(sc); mesh.scene = sc
     mesh.write(path)
 
+def glb_to_json(src, dst):
+    """same model as a single glTF JSON with the binary buffer embedded (artifact pages can serve .json, not .glb)"""
+    import struct, base64
+    b = open(src, 'rb').read(); _, _, length = struct.unpack('<4sII', b[:12]); off = 12; js = binc = None
+    while off < length:
+        clen, ctype = struct.unpack('<II', b[off:off + 8]); data = b[off + 8: off + 8 + clen]
+        if ctype == 0x4E4F534A: js = json.loads(data)
+        elif ctype == 0x004E4942: binc = data
+        off += 8 + clen
+    js['buffers'][0]['uri'] = 'data:application/octet-stream;base64,' + base64.b64encode(binc).decode()
+    open(dst, 'w').write(json.dumps(js, separators=(',', ':')))
+
 def hexrgba(h, a):
     """glTF base colour factors are LINEAR: convert the sRGB hex so the colours read as specified"""
     h = h.lstrip('#'); lin = lambda c: (c / 255.0) / 12.92 if c / 255.0 <= 0.04045 else ((c / 255.0 + 0.055) / 1.055) ** 2.4
@@ -275,6 +362,7 @@ def export(layers):
     T = trimesh.transformations.rotation_matrix(-math.pi / 2, (1, 0, 0)) @ trimesh.transformations.translation_matrix((-C[0], -C[1], 0))
     g = scene.copy(); g.apply_transform(T)
     g.export(os.path.join(OUT, 'titik-temu-v3.glb'))
+    glb_to_json(os.path.join(OUT, 'titik-temu-v3.glb'), os.path.join(OUT, 'titik-temu-v3.gltf.json'))
     # DAE for SketchUp: z-up, metres, site coordinates (matches the DXF sheets)
     write_dae(layers, os.path.join(OUT, 'titik-temu-v3.dae'))
     obj = trimesh.exchange.obj.export_obj(scene, include_normals=True, include_color=True, mtl_name='titik-temu-v3.mtl', return_texture=True)

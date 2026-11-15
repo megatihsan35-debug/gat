@@ -26,7 +26,7 @@ LAYERS = {
     'F-ESCP': (1, 35), 'F-EQPT': (1, 25), 'F-DETN': (1, 18), 'F-RATE': (1, 50),
     'P-CWAT': (5, 35), 'P-SANI': (34, 35), 'P-RAIN': (4, 35), 'P-EQPT': (5, 25),
     'M-ELEC': (6, 25), 'M-ACMV': (130, 25), 'M-EQPT': (6, 25),
-    'S-DETL': (7, 35), 'X-TITL': (7, 25),
+    'S-DETL': (7, 35), 'X-TITL': (7, 25), 'L-CANP': (32, 25), 'L-PLNT': (82, 18),
 }
 
 class Drawing:

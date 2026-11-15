@@ -6,8 +6,9 @@ from shapely.geometry import Polygon, Point, LineString, MultiLineString, box
 from shapely.ops import unary_union
 from cad import Drawing, INK
 import plan3 as M
-from plan3 import C, P, d, SC, FFL, CORES, S4, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
+from plan3 import C, P, d, tdir, SC, FFL, CORES, S4, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
 import plans
+import landscape as LS
 
 R_ROOF, R_DISC, ROOF_T = SC.R_ROOF, SC.R_DISC, SC.ROOF_T
 R_RIN = M.R_ROOF_IN
@@ -154,6 +155,32 @@ def section(a, b, look_side=1, label='A'):
             stair_flights(D, X, c)
     if X.line.distance(Point(plans.frame(S4['bc'], 0, S4['v0'] + 3))) < S4['w'] / 2:
         s4_flights(D, X)
+    # ---- entrance canopies: cover + ribs where the cut passes through, the far edge beam beyond
+    for c in LS.CANOPIES:
+        us = np.linspace(0, X.L, int(X.L / 0.1))
+        cut_pts, bey = [], []
+        for u in us:
+            p = X.pt(u); v = p - C; s_ = float(np.dot(v, d(c['b']))); off = float(np.dot(v, tdir(c['b'])))
+            if not (c['R_in'] <= s_ <= c['R_out']): continue
+            h = LS.hw(c, s_)
+            if abs(off) <= h: cut_pts.append((u, s_, off / h))
+        if len(cut_pts) > 2:
+            top = [(u, LS.z_top(c, s_, t)) for u, s_, t in cut_pts]
+            bot = [(u, LS.z_top(c, s_, t) - LS.rib_depth(c, s_)) for u, s_, t in cut_pts]
+            D.poly(Polygon(top + bot[::-1]).buffer(0), 'L-CANP', fill='#CDBB93', edge=CUT, lw=0.13, z=5)
+            for side in (-1, 1):
+                pts = []
+                for s_ in np.linspace(c['R_in'], c['R_out'], 60):
+                    q = LS.xy(c, s_, side); off = float(np.dot(q - X.a, nrm))
+                    if off > 0: pts.append((X.u(q), LS.z_edge(c, s_)))
+                if len(pts) > 1: D.line(pts, 'L-CANP', lw=0.18, color='#9C845A', z=3)
+            for q in LS.column_pts(c):
+                for tp, zt in zip(q['tops'], q['ztops']):
+                    if float(np.dot(np.array(q['base']) - X.a, nrm)) > -0.5: D.line([(X.u(q['base']), ground_z(q['base'])), (X.u(tp), zt)], 'L-CANP', lw=0.25, color='#9C845A', z=3)
+            for (q, z0, z1) in LS.hangers(c):
+                if abs(float(np.dot(np.array(q) - X.a, nrm))) < 4: D.line([(X.u(q), z0), (X.u(q), z1)], 'L-CANP', lw=0.07, color='#9C845A', z=3)
+            um = cut_pts[len(cut_pts) // 2]
+            D.text((um[0], LS.z_top(c, um[1], um[2]) + 0.9), 'ANYAMAN CANOPY', 'A-ANNO', size=1.7, halo=True)
     # ---- people, labels, levels
     seen = []
     for u_, z_, t in labels:
@@ -260,12 +287,27 @@ def elevation(view_b, label):
         pg = P(R_GF, b + 0.25)
         if SC.GF.buffer(0.2).contains(Point(pg)):
             items.append((dep - 3.6, 'gf', Polygon([(U(P(R_GF, b)), 0.9), (U(P(R_GF, b1)), 0.9), (U(P(R_GF, b1)), 4.8), (U(P(R_GF, b)), 4.8)]), b))
+    for c in LS.CANOPIES:
+        for s_ in np.arange(c['R_in'], c['R_out'] - 1e-6, 0.75):
+            s1 = min(c['R_out'], s_ + 0.75)
+            for t in np.linspace(-1, 1, 9)[:-1]:
+                t1 = t + 0.25; sm, tm = (s_ + s1) / 2, t + 0.125
+                pts = [(s_, t), (s1, t), (s1, t1), (s_, t1)]
+                q = Polygon([(U(LS.xy(c, a, b)), LS.z_top(c, a, b)) for a, b in pts])
+                if q.area < 1e-4: q = q.buffer(0.01)
+                kind = 'can_solid' if LS.cell_solid(c, sm, tm) else 'can_glass'
+                items.append((depth(LS.xy(c, sm, tm)) + 0.5, kind, q, 0))
+            for side in (-1, 1):
+                q = Polygon([(U(LS.xy(c, s_, side)), LS.z_edge(c, s_) - 0.4), (U(LS.xy(c, s1, side)), LS.z_edge(c, s1) - 0.4),
+                             (U(LS.xy(c, s1, side)), LS.z_edge(c, s1)), (U(LS.xy(c, s_, side)), LS.z_edge(c, s_))])
+                items.append((depth(LS.xy(c, sm, side)) + 0.6, 'can_beam', q.buffer(0.005), 0))
     items.sort(key=lambda t: t[0])
-    colors = dict(roof=('#2B3036', None), veil=('#EEF1F3', None), l1=('#3A4048', None), l2=('#3A4048', None), gf=('#C9D3DA', None))
+    colors = dict(roof=('#2B3036', None), veil=('#EEF1F3', None), l1=('#3A4048', None), l2=('#3A4048', None), gf=('#C9D3DA', None),
+                  can_solid=('#CDBB93', None), can_glass=('#E3ECEF', None), can_beam=('#9C845A', None))
     for dep, kind, q, b in items:
         fc = colors[kind][0]
         if kind == 'roof' and dep < 0: fc = '#596069'
-        D.poly(q.buffer(0.004), 'A-ELEV', fill=fc, edge=None, z=2 + (dep + 40) / 100)
+        D.poly(q.buffer(0.004), 'L-CANP' if kind.startswith('can') else 'A-ELEV', fill=fc, edge=None, z=2 + (dep + 40) / 100)
     # fins (front half), drawn as their projected width
     for bb, ang, top in SC.FINS:
         dep = depth(P(R_L1, bb))
@@ -276,6 +318,11 @@ def elevation(view_b, label):
         u0, u1 = sorted((U(e0), U(e1)))
         if u1 - u0 < 0.03: u1 = u0 + 0.03
         D.poly(box(u0, 5.4, u1, top), 'A-ELEV', fill='#8C949C', edge='#5E666E', lw=0.05, z=2 + (dep + 40) / 100 + 0.001)
+    for c in LS.CANOPIES:
+        for q in LS.column_pts(c):
+            if depth(q['base']) < -2: continue
+            for tp, zt in zip(q['tops'], q['ztops']):
+                D.line([(U(q['base']), 0.0), (U(tp), zt)], 'L-CANP', lw=0.3, color='#7E6A45', z=2 + (depth(q['base']) + 40) / 100 + 0.002)
     # plinth band and steps
     D.poly(box(-(R_GF + 1.5), 0, R_GF + 1.5, 0.9), 'A-ELEV', fill='#DCD8CF', edge=INK, lw=0.13, z=1.5)
     # people for scale

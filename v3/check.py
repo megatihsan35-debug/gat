@@ -2,7 +2,9 @@
 doors on walls and not opening into other rooms, columns clear of rooms, stairs, headroom, exits, travel. python3 check.py"""
 import math
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
+from shapely.ops import unary_union
+import plans
 import plan3 as M
 from plan3 import SC
 
@@ -51,7 +53,50 @@ def run():
     cap = {'L1': 75 * (U['C1'] + U['C2'] + U['S3'] + U['S4']), 'L2': 75 * (U['C2'] + U['S3'])}
     for fl in cap:
         if load[fl] > cap[fl]: bad.append(('EXIT CAPACITY', fl, load[fl], cap[fl]))
-    return bad, dict(load=load, cap=cap, l2clear=round(l2clear, 2), rises={k: round(v * 1000) for k, v in rises.items()})
+    # ---- entrance canopies + pocket gardens
+    import landscape as LS, siteplan as ST, sections as SE
+    for c in LS.CANOPIES:
+        if not LS.outline(c).within(SC.ENV.buffer(0.01)) and LS.outline(c).difference(SC.ENV).area > 0.05 and \
+           LS.outline(c).difference(SC.ENV).difference(SC.disc(M.R_L1 + 0.01)).area > 0.05:
+            bad.append(('CANOPY OUTSIDE SETBACK', c['k'], round(LS.outline(c).difference(SC.ENV).area, 2)))
+        worst_in, worst_out = 99, 99
+        for s_ in np.arange(c['R_in'], c['R_out'], 0.2):
+            for t in np.linspace(-1, 1, 11):
+                p = LS.xy(c, s_, t); clear = LS.z_top(c, s_, t) - (0.4 if abs(t) > 0.95 else LS.rib_depth(c, s_)) - SE.ground_z(p)   # edge beam 400 deep, ribs elsewhere
+                if s_ <= c['R_gate']: worst_in = min(worst_in, clear)
+                else: worst_out = min(worst_out, clear)
+                if s_ <= c['R_gate'] and LS.z_top(c, s_, t) > 4.52 - 0.05: bad.append(('CANOPY HITS L1 SOFFIT', c['k'], round(s_, 1)))
+        if worst_in < 2.4: bad.append(('CANOPY HEADROOM INSIDE', c['k'], round(worst_in, 2)))
+        if worst_out < 2.7: bad.append(('CANOPY HEADROOM OUTSIDE', c['k'], round(worst_out, 2)))
+        for q in LS.column_pts(c):
+            for nm, g in (('HARDSTANDING', ST.HS_S.union(ST.HS_E)), ('PARKING', ST.AISLE.union(unary_union([k for _, k in ST.PARK]))), ('YARD', ST.YARD)):
+                if g.buffer(0.3).contains(Point(q['base'])): bad.append(('CANOPY COLUMN IN ' + nm, c['k']))
+        # canopy must sit inside the gate passage (clear of GF walls) between the court edge and the first-floor edge
+        inside = LS.outline(c).intersection(SC.disc(M.R_L1 - 0.3))
+        walls = plans.walls('GF')['solid']
+        if inside.intersects(walls.buffer(-0.01)): bad.append(('CANOPY CLASHES WITH GF WALL', c['k'], round(inside.intersection(walls).area, 2)))
+    import sheets2
+    hs = sheets2.canopy_hs_clear()
+    if hs < 4.5: bad.append(('CANOPY OVER HARDSTANDING < 4.5 M', round(hs, 2)))
+    hard = unary_union([ST.HS_E, ST.HS_S, ST.YARD, ST.AISLE, ST.UB, ST.TERRACE] + [k for _, k in ST.PARK] + ST.MOTOR + ST.BIKES + [s_ for _, s_ in ST.forecourts()])
+    for i, q in enumerate(ST.OUTER):
+        if q.intersection(hard).area > 0.05: bad.append(('OUTER POCKET ON HARD AREA', i, round(q.intersection(hard).area, 2)))
+        if not q.within(SC.ENV.buffer(0.01)): bad.append(('OUTER POCKET OUTSIDE SETBACK', i))
+        for nm, ln in list(ST.SERVICE_LINES.items()) + [(k, ST.SEWER[k]) for k in ('east', 'north', 'west')]:
+            if q.intersects(LineString(ln).buffer(0.5)): bad.append(('POCKET OVER BURIED SERVICE', i, nm))
+    def doors_on(fl):
+        return unary_union([Point(dd['p']).buffer(1.2) for dd in M.DOORS if [q for q in M.ROOMS if q['key'] == dd['key']][0]['fl'] == fl] +
+                           [Point(x['p']).buffer(1.2) for x in M.CORE_DOORS if x['fl'] == fl])
+    for g, fl in [(g, 'GF') for g in ST.GATE] + [(dict(k='SKY', poly=q), 'L1') for q in LS.SKY]:
+        if g['poly'].intersects(doors_on(fl)): bad.append(('POCKET IN FRONT OF A DOOR', g['k'], fl))
+    for a, b in LS.INNER:
+        for sp in SC.SPINES:
+            h = LS.gate_halfangle(sp, 8.8, 0.0)
+            if (a - (sp['b'] + h) + 180) % 360 - 180 < 0 and ((sp['b'] - h) - b + 180) % 360 - 180 < 0: bad.append(('INNER POCKET BLOCKS GATE', sp['k']))
+    st = LS.seats()
+    if st['total'] < 100: bad.append(('COURT SEATS < 100', st['total']))
+    if LS.play_poly().area < 30: bad.append(('PLAY AREA < 30', round(LS.play_poly().area, 1)))
+    return bad, dict(load=load, cap=cap, seats=st['total'], canopy_hs_clear=round(hs, 2), outer=len(ST.OUTER), gate=len(ST.GATE), inner=len(LS.INNER), sky=len(LS.SKY), l2clear=round(l2clear, 2), rises={k: round(v * 1000) for k, v in rises.items()})
 
 if __name__ == '__main__':
     bad, info = run()
