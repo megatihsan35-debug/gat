@@ -85,6 +85,11 @@ def draw_door(D, dd, color=INK, lw=0.13, tags=True):
             lo, hi = sorted([a0, a1])
             if hi - lo > 180: lo, hi = hi, lo + 360
             D.arc(h, lw_, lo, hi, 'A-DOOR', lw=0.09, color=color)
+    elif dd['kind'] == 'slide' and dd['tag'] == 'SF1':
+        # single leaf in front of the fixed display pane: closed position solid, parked position dashed over the pane
+        tc = np.array(P(R_BR1, M.mid(dd['key'])[0])) - p; tf = t if float(np.dot(tc, t)) > 0 else -t
+        D.line([a + sw * 0.06, b + sw * 0.06], 'A-DOOR', lw=0.18, color=color)
+        D.line([p + tf * (w / 2 - 0.05) + sw * 0.06, p + tf * (w * 1.5 - 0.05) + sw * 0.06], 'A-DOOR', lw=0.1, color=color, ls='--')
     elif dd['kind'] == 'slide':
         D.line([a + sw * 0.05, p + t * 0.1 + sw * 0.05], 'A-DOOR', lw=0.18, color=color)
         D.line([p - t * 0.1 + sw * 0.12, b + sw * 0.12], 'A-DOOR', lw=0.18, color=color)
@@ -238,9 +243,10 @@ def dumbwaiter(D, color):
     cs = list(g.exterior.coords); D.line([cs[0], cs[2]], 'A-FIXT', lw=0.07, color=color); D.line([cs[1], cs[3]], 'A-FIXT', lw=0.07, color=color)
     c = np.array(g.centroid.coords[0]); D.text(c + (c - C) / np.linalg.norm(c - C) * -1.0, 'DUMBWAITER', 'A-FIXT', size=1.1, color=color, halo=True)
 
-def fit(D, fl, color=INK):
+def fit(D, fl, color=INK, skip=()):
     for r in rooms(fl):
         k, nm = r['key'], r['name']
+        if k in skip: continue
         if k in ('G01', 'L04'): toilet_bank(D, r, True, color)
         elif k in ('G02', 'L05'): toilet_bank(D, r, False, color)
         elif k in ('G06', 'G07'): staff_restroom(D, r, color)
@@ -514,7 +520,7 @@ def gap_glass():
 
 def plan_drawing(fl, mode='arch'):
     D = Drawing(f'PLAN {fl} {mode}')
-    base = mode != 'arch'
+    base = mode == 'base'
     ink = GREY if base else INK; wfill = LGREY if base else INK
     # context: spines, court, pool, plate outline below / above
     for s in SC.SPINES:
@@ -587,12 +593,14 @@ def plan_drawing(fl, mode='arch'):
     # stairs, lifts, external stair
     for c in core_list(fl): draw_core(D, c, fl, color=ink, show_text=True)
     if fl in ('GF', 'L1'): draw_s4(D, fl, color=ink)
-    fit(D, fl, color=ink if not base else '#B5BCC4')
+    import interior as IN
+    fit(D, fl, color=ink if not base else '#B5BCC4', skip=IN.REFIT)
+    if not base: IN.furniture(D, fl, full=(mode == 'int'))
     if fl == 'GF': court_fit(D, ink if not base else '#B5BCC4')
     if fl in ('GF', 'L1'): landscape_overlay(D, fl, None if not base else '#B5BCC4')
     room_tags(D, fl, color=ink)
     level_tag(D, P(R_COURT - 1.5, 160) if fl == 'GF' else P(10.2, 240 if fl != 'L2' else 214), f'FFL +{FFL[fl]:.3f}', color=ink)
-    if not base:
+    if mode == 'arch':
         radial_dims(D)
         section_marks(D)
     return D

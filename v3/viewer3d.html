@@ -78,6 +78,9 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
         <button id="v-garden" data-view="garden">Garden ring</button>
         <button id="v-bridge" data-view="bridge">On the ring bridge</button>
         <button id="v-tiers" data-view="tiers">Roof tiers</button>
+        <button id="v-arcade" data-view="arcade">Arcade + shopfronts</button>
+        <button id="v-cafe" data-view="cafe">Kelantan cafe</button>
+        <button id="v-gallery" data-view="gallery">Galeri Peta Rasa</button>
       </div>
     </div>
     <div class="grp">
@@ -100,6 +103,8 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
         <button id="t-site" data-grp="site" aria-pressed="true">Site + trees</button>
         <button id="t-canopy" data-grp="canopy" aria-pressed="true">Canopies</button>
         <button id="t-garden" data-grp="garden" aria-pressed="true">Pocket gardens</button>
+        <button id="t-interior" data-grp="interior" aria-pressed="true">Interior</button>
+        <button id="t-market" data-grp="market" aria-pressed="true">Market stalls</button>
       </div>
     </div>
     <div class="grp">
@@ -158,6 +163,9 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     garden: { pos: [-44, 9, -26], tgt: [-26, 1, -12], fov: 50 },
     bridge: { pos: [9.25, 7.05, 16.0], tgt: [16.0, 7.2, 9.25], fov: 70 },
     tiers:  { pos: [-52, 46, 40], tgt: [0, 12, 0], fov: 38 },
+    arcade: { pos: [10.08, 2.55, 3.28], tgt: [6.2, 2.6, 11.65], fov: 72 },
+    cafe:   { pos: [-7.59, 2.55, -20.86], tgt: [-2.62, 2.2, -18.62], fov: 74 },
+    gallery: { pos: [6.29, 11.2, 9.33], tgt: [0.97, 10.7, 13.87], fov: 70 },
   };
   const GROUPS = {
     roof: ['A-ROOF', 'A-ROOF-MID', 'A-FASCIA', 'A-FUNNEL', 'A-CLERESTORY'], fins: ['A-FIN'], glass: ['A-GLAZ', 'A-BALU', 'A-ROOFLIGHT'],
@@ -205,6 +213,7 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     });
     // parent nodes carry the layer names from the export; map them onto their meshes
     root.traverse(o => { if (o.isMesh && o.parent && o.parent.name && !nodes[o.parent.name]) nodes[o.parent.name] = o.parent; });
+    GROUPS.interior = Object.keys(nodes).filter(n => n.startsWith('I-') && n !== 'I-MARKET'); GROUPS.market = ['I-MARKET'];
     scene.add(root); status.hidden = true;
     setView(params.get('view') || 'hero'); setCut(+(params.get('cut') || 99));
     (params.get('hide') || '').split(',').filter(Boolean).forEach(g => setGroup(g, false));

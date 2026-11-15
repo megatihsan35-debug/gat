@@ -372,7 +372,11 @@ def place_doors():
     a, b8 = EAST['G08']; door('G09', 18.15, b8, 0.9, 'out', 'D1', fire='FD60')                     # LAN opens off the loading bay
     door('G08', R_GF, (a + b8) / 2, 1.5, 'out', 'D4', fire='FD60', kind='double')
     for r in SHOPS:
-        bm, b0, b1 = mid(r['key']); door(r['key'], R_BR1, bm, 1.8, 'in', 'SF', kind='slide'); door(r['key'], R_GF, bm, 0.9, 'out', 'D1')
+        # shopfront kit (interior study 16 Nov): 1000 clear sliding leaf beside a fixed display pane; the opening sits against the
+        # clockwise pier (front chord 2.30-2.55, less 2 x 50 half-piers and the 62.5 wall halves)
+        bm, b0, b1 = mid(r['key']); W_ = 2 * R_BR1 * math.sin(math.radians((b1 - b0) / 2))
+        bo = bm + math.degrees((W_ / 2 - 0.0625 - 0.05 - 0.5) / R_BR1)
+        door(r['key'], R_BR1, bo, 1.0, 'in', 'SF1', kind='slide'); door(r['key'], R_GF, bm, 0.9, 'out', 'D1')
     bm, b0, b1 = mid('G20'); door('G20', 19.0, b0, 0.9, 'in', 'D1')
     bm, b0, b1 = mid('G21'); door('G21', R_GF, bm, 1.2, 'out', 'D3'); door('G21', R_BR1, bm, 1.0, 'in', 'D2')
     bm, b0, b1 = mid('G22'); door('G22', R_BR1, bm, 1.2, 'in', 'D3')

@@ -100,6 +100,14 @@ def jobs_list():
         J.append((f'P-10{i}', (lambda fl=fl, i=i: plan_sheet(fl, f'P-10{i}', 'base', FL_NAME[fl].replace(' PLAN', '') + ' · PLUMBING + DRAINAGE', SV.plumbing_overlay, SV.PLUMB_LEGEND, PLUMB_NOTES))))
     for i, fl in enumerate(('GF', 'L1', 'L2')):
         J.append((f'M-10{i}', (lambda fl=fl, i=i: plan_sheet(fl, f'M-10{i}', 'base', FL_NAME[fl].replace(' PLAN', '') + ' · ELECTRICAL + ACMV', SV.mne_overlay, SV.MNE_LEGEND, MNE_NOTES))))
+    import interior as IN
+    for i, fl in enumerate(('GF', 'L1', 'L2')):
+        J.append((f'I-10{i}', (lambda fl=fl, i=i: IN.interior_plan(fl, f'I-10{i}'))))
+    import interior_sheets as IS
+    J.append(('I-200', lambda: IS.shopfront_sheet('I-200')))
+    J.append(('I-201', lambda: IS.sections_sheet('I-201')))
+    J.append(('I-202', lambda: IS.sections_sheet('I-202')))
+    J.append(('I-300', lambda: IS.signage_sheet('I-300')))
     return J
 
 def save(no, S, dl):

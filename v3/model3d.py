@@ -210,6 +210,8 @@ def build():
             add('SITE-TRUNK', cyl(p, 0.15, 0.0, 3.2, 8))
             s = trimesh.creation.icosphere(subdivisions=1, radius=2.4); s.apply_scale((1, 1, 0.8)); s.apply_translation((p[0], p[1], 5.0)); add('SITE-TREE', [s])
     landscape3d(L)
+    import interior3d as I3
+    MAT.update(I3.MAT_I); I3.add_interior(L)
     return {k: trimesh.util.concatenate(v) for k, v in L.items() if v}
 
 def prism(top_pts, depth, half):
