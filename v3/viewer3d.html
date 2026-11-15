@@ -1,0 +1,211 @@
+<title>Titik Temu 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* layout: one working screen — the model fills the stage, a narrow drafting-table rail on the right (below on phones) */
+:root {
+  --bg: #EEF0F1; --stage: #E4E8EA; --panel: #FAFAF9; --fg: #1A1F24; --muted: #5E6871; --line: #D3D8DC;
+  --accent: #C9690A; --accent-ink: #FFFFFF; --chip: #E9ECEE;
+  --f-display: 'Space Grotesk', 'Inter', system-ui, sans-serif; --f-body: 'Inter', system-ui, sans-serif; --f-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15191D; --stage: #1B2126; --panel: #1E2429; --fg: #E7EAEC; --muted: #9AA4AD; --line: #2E363D; --accent: #E58A2E; --accent-ink: #1A1206; --chip: #262E35; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #15191D; --stage: #1B2126; --panel: #1E2429; --fg: #E7EAEC; --muted: #9AA4AD; --line: #2E363D; --accent: #E58A2E; --accent-ink: #1A1206; --chip: #262E35; color-scheme: dark }
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--f-body); }
+.app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 300px; }
+.stage { position: relative; background: var(--stage); min-height: 0; }
+#c { width: 100%; height: 100%; display: block; touch-action: none; }
+.hud { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: 14px; pointer-events: none; }
+.hud h1 { font: 700 26px/1.05 var(--f-display); letter-spacing: .01em; margin: 0; text-transform: uppercase; }
+.hud .sub { font: 500 11px/1.4 var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-top: 4px; }
+.hud .cut { margin-top: 10px; font: 500 12px var(--f-mono); color: var(--muted); }
+.status { position: absolute; inset: 0; display: grid; place-items: center; font: 500 13px var(--f-mono); color: var(--muted); pointer-events: none; }
+.compass { position: absolute; right: 14px; bottom: 14px; width: 54px; height: 54px; pointer-events: none; }
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding-block: 18px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.grp h2 { font: 600 11px/1 var(--f-body); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.views { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+button { font: 500 12.5px var(--f-body); color: var(--fg); background: var(--chip); border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; cursor: pointer; text-align: left; }
+button:hover { border-color: var(--line); }
+button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.levels button { text-align: center; padding: 8px 4px; font-family: var(--f-mono); font-size: 12px; }
+.note { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+td { padding: 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; white-space: nowrap; padding-left: 8px; }
+.files { font-size: 12.5px; color: var(--muted); }
+.files b { color: var(--fg); font-weight: 600; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+  html, body { height: auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+  .hud h1 { font-size: 21px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <div class="stage">
+    <canvas id="c" aria-label="3D model of Titik Temu. Drag to orbit, scroll or pinch to zoom."></canvas>
+    <div class="hud">
+      <h1>Titik Temu</h1>
+      <div class="sub">Simpul Rasa Semenanjung · v3 model</div>
+      <div class="cut" id="cutlabel">FULL BUILDING</div>
+    </div>
+    <div class="status" id="status">LOADING MODEL…</div>
+    <svg class="compass" id="compass" viewBox="-27 -27 54 54" aria-hidden="true">
+      <circle r="24" fill="var(--panel)" stroke="var(--line)"/>
+      <g id="needle"><path d="M0 -19 L6 4 L0 0 L-6 4 Z" fill="var(--accent)"/><text y="-8" x="0" text-anchor="middle" font-size="0" fill="var(--fg)">N</text></g>
+      <text id="nlabel" x="0" y="0" text-anchor="middle" dominant-baseline="middle" font-family="Space Grotesk, sans-serif" font-weight="700" font-size="9" fill="var(--fg)">N</text>
+    </svg>
+  </div>
+  <aside>
+    <div class="grp">
+      <h2>Views</h2>
+      <div class="views" id="views">
+        <button id="v-hero" data-view="hero" aria-pressed="true">Hero, south-east</button>
+        <button id="v-aerial" data-view="aerial">Aerial</button>
+        <button id="v-gate" data-view="gate">Selatan gate</button>
+        <button id="v-court" data-view="court">Talam court</button>
+        <button id="v-tengah" data-view="tengah">Tengah gate</button>
+        <button id="v-top" data-view="top">Top down</button>
+      </div>
+    </div>
+    <div class="grp">
+      <h2>Cut through floor</h2>
+      <div class="levels" id="levels">
+        <button id="l-all" data-cut="99" aria-pressed="true">ALL</button>
+        <button id="l-gf" data-cut="2.1">GF</button>
+        <button id="l-l1" data-cut="6.6">L1</button>
+        <button id="l-l2" data-cut="10.8">L2</button>
+        <button id="l-rf" data-cut="13.2">RF</button>
+      </div>
+      <p class="note">Cuts the model 1.2 m above each floor, like a plan.</p>
+    </div>
+    <div class="grp">
+      <h2>Show</h2>
+      <div class="toggles" id="toggles">
+        <button id="t-roof" data-grp="roof" aria-pressed="true">Roof + funnel</button>
+        <button id="t-fins" data-grp="fins" aria-pressed="true">Façade fins</button>
+        <button id="t-glass" data-grp="glass" aria-pressed="true">Glass</button>
+        <button id="t-site" data-grp="site" aria-pressed="true">Site + trees</button>
+      </div>
+    </div>
+    <div class="grp">
+      <h2>Levels</h2>
+      <table>
+        <tr><td>Site datum</td><td>±0.000</td></tr>
+        <tr><td>Ground floor, court</td><td>+0.900</td></tr>
+        <tr><td>First floor (hanging)</td><td>+5.400</td></tr>
+        <tr><td>Second floor</td><td>+9.600</td></tr>
+        <tr><td>Roof low · Timur, Tengah</td><td>+10.200</td></tr>
+        <tr><td>Funnel rim</td><td>+13.500</td></tr>
+        <tr><td>Roof high · Selatan, Utara</td><td>+16.200</td></tr>
+        <tr><td>Mast</td><td>+30.000</td></tr>
+      </table>
+    </div>
+    <div class="grp files">
+      <h2>Model files</h2>
+      <b>.dae</b> for SketchUp (File → Import → COLLADA), <b>.glb</b> and <b>.obj</b> are in the chat. They use the same site coordinates in metres as the DXF drawings, so the 3D model lands on the plans.
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+(function () {
+  const canvas = document.getElementById('c'), status = document.getElementById('status');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.localClippingEnabled = true;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.3, 2000);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true; controls.dampingFactor = 0.08; controls.maxPolarAngle = Math.PI * 0.495;
+  scene.add(new THREE.HemisphereLight(0xF4F1EA, 0x8A8F86, 0.75));
+  const sun = new THREE.DirectionalLight(0xFFF3DF, 1.25);
+  sun.position.set(-45, 70, 35); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048); const sc = sun.shadow.camera; sc.left = -75; sc.right = 75; sc.top = 75; sc.bottom = -75; sc.far = 220;
+  sun.shadow.bias = -0.0004; scene.add(sun);
+  const clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 999);
+
+  // site metres -> scene: the GLB is y-up with the centre C at the origin; north = -z
+  const VIEWS = {
+    hero:   { pos: [38, 20, 66],  tgt: [0, 7, 0],   fov: 42 },
+    aerial: { pos: [62, 88, 58],  tgt: [0, 2, 0],   fov: 40 },
+    gate:   { pos: [-1.8, 1.65, 41], tgt: [0, 7.5, 0], fov: 62 },
+    court:  { pos: [6.0, 2.4, 6.0], tgt: [0, 11.4, 0], fov: 72 },
+    tengah: { pos: [-38, 1.65, 22], tgt: [0, 6.5, 0], fov: 60 },
+    top:    { pos: [0, 120, 0.01], tgt: [0, 0, 0],  fov: 40 },
+  };
+  const GROUPS = {
+    roof: ['A-ROOF', 'A-FASCIA', 'A-FUNNEL'], fins: ['A-FIN'], glass: ['A-GLAZ', 'A-BALU'],
+    site: ['SITE-LAWN', 'SITE-PAVING', 'SITE-ROAD', 'SITE-TREE', 'SITE-TRUNK', 'A-UTIL'],
+  };
+  const nodes = {};
+  function setView(name) {
+    const v = VIEWS[name]; camera.fov = v.fov; camera.updateProjectionMatrix();
+    camera.position.set(...v.pos); controls.target.set(...v.tgt); controls.update();
+    document.querySelectorAll('#views button').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === name));
+  }
+  function setCut(h) {
+    clip.constant = h;
+    document.querySelectorAll('#levels button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.cut === h));
+    const names = { 99: 'FULL BUILDING', 2.1: 'PLAN CUT AT +2.100 · GROUND FLOOR', 6.6: 'PLAN CUT AT +6.600 · FIRST FLOOR', 10.8: 'PLAN CUT AT +10.800 · SECOND FLOOR', 13.2: 'CUT AT +13.200 · UNDER THE ROOF' };
+    document.getElementById('cutlabel').textContent = names[h] || '';
+  }
+  function setGroup(g, on) {
+    (GROUPS[g] || []).forEach(n => { if (nodes[n]) nodes[n].visible = on; });
+    const b = document.querySelector(`#toggles [data-grp="${g}"]`); if (b) b.setAttribute('aria-pressed', on);
+  }
+  document.getElementById('views').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); });
+  document.getElementById('levels').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setCut(+b.dataset.cut); });
+  document.getElementById('toggles').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setGroup(b.dataset.grp, b.getAttribute('aria-pressed') !== 'true'); });
+
+  function resize() {
+    const r = canvas.parentElement.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas.parentElement); resize();
+
+  const params = new URLSearchParams(location.search);
+  new THREE.GLTFLoader().load(params.get('glb') || 'titik-temu-v3.gltf.json', gltf => {
+    const root = gltf.scene;
+    root.traverse(o => {
+      if (o.name && !nodes[o.name]) nodes[o.name] = o;
+      if (o.isMesh) {
+        const transparent = o.material.transparent || o.material.opacity < 1;
+        o.material.side = THREE.DoubleSide; o.material.clippingPlanes = [clip];
+        o.castShadow = !transparent && !/SITE-(LAWN|PAVING|ROAD|WATER)/.test(o.name);
+        o.receiveShadow = true;
+        if (transparent) { o.material.depthWrite = false; o.renderOrder = 2; }
+      }
+    });
+    // parent nodes carry the layer names from the export; map them onto their meshes
+    root.traverse(o => { if (o.isMesh && o.parent && o.parent.name && !nodes[o.parent.name]) nodes[o.parent.name] = o.parent; });
+    scene.add(root); status.hidden = true;
+    setView(params.get('view') || 'hero'); setCut(+(params.get('cut') || 99));
+    (params.get('hide') || '').split(',').filter(Boolean).forEach(g => setGroup(g, false));
+    document.body.dataset.ready = '1';
+  }, undefined, err => { status.textContent = 'THE MODEL FILE COULD NOT BE LOADED'; console.error(err); });
+
+  const needle = document.getElementById('needle'), nlabel = document.getElementById('nlabel');
+  (function loop() {
+    controls.update(); renderer.render(scene, camera);
+    const a = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);   // north is -z
+    needle.setAttribute('transform', `rotate(${(-a * 180 / Math.PI + 180).toFixed(1)})`);
+    nlabel.setAttribute('transform', `rotate(${(-a * 180 / Math.PI + 180).toFixed(1)}) translate(0 -14) rotate(${(a * 180 / Math.PI - 180).toFixed(1)})`);
+    requestAnimationFrame(loop);
+  })();
+})();
+</script>
