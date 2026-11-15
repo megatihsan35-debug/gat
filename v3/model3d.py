@@ -9,8 +9,9 @@ import mapbox_earcut as earcut
 from shapely.geometry import Polygon, MultiPolygon, Point, LineString, box
 from shapely.ops import unary_union
 import plan3 as M
-from plan3 import C, P, d, tdir, frame, SC, CORES, S4, FFL, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
+from plan3 import C, P, d, tdir, frame, SC, CORES, S4, EXT, FFL, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
 import plans, sections as SE, siteplan as ST, landscape as LS
+import rings as RG
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out', '3d'); os.makedirs(OUT, exist_ok=True)
@@ -19,7 +20,8 @@ OUT = os.path.join(HERE, 'out', '3d'); os.makedirs(OUT, exist_ok=True)
 MAT = {
     'SITE-LAWN': ('#9DB585', 1.0), 'SITE-PAVING': ('#E3DCCD', 1.0), 'SITE-ROAD': ('#6E7176', 1.0), 'SITE-PLINTH': ('#CFC8BA', 1.0),
     'SITE-WATER': ('#4F9CC0', 0.85), 'SITE-TREE': ('#6F9460', 1.0), 'SITE-TRUNK': ('#7A6650', 1.0),
-    'A-SLAB': ('#D8D4CC', 1.0), 'A-WALL': ('#EEECE8', 1.0), 'A-CORE': ('#C9C4BB', 1.0), 'A-GLAZ': ('#8DBBD3', 0.32),
+    'A-SLAB': ('#D8D4CC', 1.0), 'A-BRIDGE': ('#E4E0D8', 1.0), 'A-WALL': ('#EEECE8', 1.0), 'A-CORE': ('#C9C4BB', 1.0), 'A-GLAZ': ('#8DBBD3', 0.32),
+    'A-ROOFLIGHT': ('#DDEBF2', 0.6), 'A-CLERESTORY': ('#9CC6DA', 0.45), 'A-ROOF-MID': ('#C3C8CE', 1.0),
     'A-COLS': ('#E2DFD8', 1.0), 'A-STRS': ('#BDB7AD', 1.0), 'A-BALU': ('#A9CDE0', 0.25), 'A-ROOF': ('#CDD1D6', 1.0),
     'A-ROOF-SOFFIT': ('#E9E5DC', 1.0), 'A-FUNNEL': ('#EAE6DD', 1.0), 'A-MAST': ('#D9CFB4', 1.0), 'A-FIN': ('#A39C88', 1.0),
     'A-FASCIA': ('#3A4048', 1.0), 'A-UTIL': ('#B7BCC2', 1.0), 'A-FURN': ('#8A7F70', 1.0),
@@ -128,8 +130,11 @@ def build():
     add('SITE-PLINTH', flat(SC.disc(R_POOL), 0.1, 0.3))
     add('SITE-WATER', flat(SC.disc(R_POOL - 0.05), 0.3, 0.72))
     # ---- slabs + ring bridges
-    add('A-SLAB', flat(M.PLATE['L1'], 4.8, 5.4)); add('A-SLAB', flat(SC.ann(R_BR0, R_BR1), 5.05, 5.4))
-    add('A-SLAB', flat(M.PLATE['L2'], 9.0, 9.6)); add('A-SLAB', flat(SC.ann(R_BR0, R_BR1), 9.25, 9.6))
+    thin = unary_union([M.BRIDGE, M.WALKWAYS])
+    add('A-SLAB', flat(M.PLATE['L1'].difference(thin), 4.8, 5.4)); add('A-BRIDGE', flat(thin.intersection(M.PLATE['L1']), 5.05, 5.4))
+    add('A-BRIDGE', flat(SC.ann(RG.R_M - 0.4, RG.R_M + 0.4), 4.7, 5.05))                        # ring beam of the free-standing bridge
+    add('A-SLAB', flat(M.PLATE['L2'], 9.0, 9.6))
+    add('A-ROOFLIGHT', flat(plans.gap_glass(), 5.27, 5.37))                                       # opal rooflights in the gaps (over GF rooms)
     # ---- walls (with door openings + heads), glazing, cores
     for fl in ('GF', 'L1', 'L2'):
         W = plans.walls(fl); dl = plans.door_list(fl); top = walls_top(fl); z0 = FFL[fl]
@@ -143,39 +148,43 @@ def build():
             gl = W['glaz'].difference(cutd)
             add('A-GLAZ', draped(unary_union([ln.buffer(0.03, cap_style=2) for ln in getattr(gl, 'geoms', [gl]) if ln.length > 0.05]), top, lambda x, y: z0, cell=(4.0, 3.0)))
             add('A-GLAZ', draped(unary_union([LineString([q['p'] - q['t'] * q['w'] / 2, q['p'] + q['t'] * q['w'] / 2]).buffer(0.03, cap_style=2) for q in dl if q['kind'] in ('slide',)]).intersection(W['glaz'].buffer(0.1)) if dl else Polygon(), top, lambda x, y: z0 + 2.4, cell=(4.0, 3.0)))
-    # cores: enclosure walls from GF to the top of each core (C1 to L1 + 3.6, C2 to the tank room under the roof)
+    # cores: enclosure walls from GF to the core roof (lift overrun / stair roof under the funnel), tank room on core 2
     for c in CORES.values():
-        if c['key'] == 'S3': continue
-        ztop = 9.25 if not c['to_l2'] else 15.0
-        enc = c['stair_wall'].difference(c['stair'])
-        if c['lift']: enc = enc.union(c['shaft_wall'].difference(c['shaft']))
+        enc = c['fp'].difference(c['holes'])
         dcut = []
         for dd in M.CORE_DOORS:
             if dd['key'].split('-')[0] != c['key']: continue
-            t = tdir(c['bc']) if dd['axis'] == 'v' else d(c['bc'])
-            p = np.array(dd['p']); dcut.append((dd['fl'], LineString([p - t * dd['w'] / 2, p + t * dd['w'] / 2]).buffer(0.32, cap_style=2)))
-        levels = [0.9, 5.4, 9.6, ztop] if c['to_l2'] else [0.9, 5.4, ztop]
+            t = np.array(dd['t']); p = np.array(dd['p']); dcut.append((dd['fl'], LineString([p - t * dd['w'] / 2, p + t * dd['w'] / 2]).buffer(0.32, cap_style=2)))
+        top = c['top']
+        levels = [0.9, 5.4, 9.6, top - 0.2] if c['to_l2'] else [0.9, 5.4, top - 0.2]
         fls = ['GF', 'L1', 'L2']
         for i in range(len(levels) - 1):
             za, zb = levels[i], levels[i + 1]
             cut = unary_union([g for f, g in dcut if f == fls[i]]) if any(f == fls[i] for f, _ in dcut) else Polygon()
             add('A-CORE', flat(enc.difference(cut), za, zb))
             add('A-CORE', flat(cut.intersection(enc.buffer(0.05)), za + 2.4, zb))
-        roof = unary_union([c['stair_wall']] + ([c['shaft_wall']] if c['lift'] else []))
-        add('A-CORE', flat(roof, ztop, ztop + 0.25))
-        stairs(c, L)
-    s4_stair(L)
+        add('A-CORE', flat(c['fp'], top - 0.2, top))
+        if c.get('tank') is not None:
+            tk = c['tank']; add('A-CORE', flat(tk.difference(tk.buffer(-0.2)), top, c['tank_top'] - 0.2)); add('A-CORE', flat(tk, c['tank_top'] - 0.2, c['tank_top']))
+        if c['stair'] is not None: stairs(c, L)
+    for st_ in EXT.values(): ext_stair3d(st_, L)
     # ---- columns
     for c in M.COLS:
-        z0 = SE.ground_z(c['p']) if c['ring'] != 'A' else 0.9
-        top = c['top'] if c['ring'] != 'A' else SE.funnel_top(R_BR0) - 0.28
-        add('A-COLS', cyl(c['p'], 0.175, z0 - 0.3, top + 0.05))
+        z0 = c['z0'] if c['z0'] is not None else SE.ground_z(c['p'])
+        add('A-COLS', cyl(c['p'], c['r'], z0 - (0.3 if c['z0'] is None else 0.0), c['top'] + 0.05))
     # ---- roof petals (wave), fascia band, funnel, mast
-    add('A-ROOF', draped(SE.ROOF_FP, lambda x, y: SE.roof_top((x, y)), lambda x, y: SE.roof_under((x, y)), cell=(1.5, 2.0)))
-    edge = SC.ann(M.R_ROOF - 0.08, M.R_ROOF + 0.02).difference(SC.RF_VOID)
-    add('A-FASCIA', draped(edge, lambda x, y: SE.roof_top((x, y)) + 0.02, lambda x, y: SE.roof_top((x, y)) - 0.32, cell=(1.0, 1.0)))
-    fun = SE.FUNNEL_FP
-    add('A-FUNNEL', draped(fun, lambda x, y: SE.funnel_top(plans.rad((x, y))), lambda x, y: SE.funnel_top(plans.rad((x, y))) - 0.28, cell=(5.0, 1.0)))
+    # three roof tiers on the wave, each 1.8 m above the one outside it, clerestories where they overlap, glazed gate slots
+    add('A-ROOF', draped(RG.OUT_FP, lambda x, y: RG.out_top((x, y)), lambda x, y: RG.out_under((x, y)), cell=(1.5, 2.0)))
+    add('A-ROOF-MID', draped(RG.MID_FP, lambda x, y: RG.mid_top((x, y)), lambda x, y: RG.mid_under((x, y)), cell=(1.5, 1.4)))
+    add('A-FUNNEL', draped(RG.FUN_FP, lambda x, y: RG.fun_top((x, y)), lambda x, y: RG.fun_under((x, y)), cell=(3.0, 1.0)))
+    add('A-GLAZ', draped(RG.SLOT_GLASS, lambda x, y: RG.roof_top_at((x, y)) - 0.02, lambda x, y: RG.roof_top_at((x, y)) - 0.08, cell=(1.0, 1.0)))
+    for g, top, und in ((SC.ann(M.R_ROOF, M.R_ROOF + 0.06).difference(SC.RF_VOID), lambda x, y: RG.out_top((x, y)) + 0.02, lambda x, y: RG.out_top((x, y)) - 0.32),
+                        (SC.ann(RG.T_MID[1], RG.T_MID[1] + 0.06).difference(SC.RF_VOID), lambda x, y: RG.mid_top((x, y)) + 0.02, lambda x, y: RG.mid_under((x, y))),
+                        (SC.ann(RG.T_MID[0] - 0.06, RG.T_MID[0]).difference(SC.RF_VOID), lambda x, y: RG.mid_top((x, y)) + 0.02, lambda x, y: RG.mid_under((x, y))),
+                        (SC.ann(RG.R_FUN, RG.R_FUN + 0.06), lambda x, y: RG.fun_top((x, y)) + 0.02, lambda x, y: RG.fun_under((x, y)) - 0.1)):
+        add('A-FASCIA', draped(g, top, und, cell=(1.0, 1.0)))
+    add('A-CLERESTORY', draped(SC.ann(16.22, 16.28), lambda x, y: RG.fun_under((x, y)), lambda x, y: RG.mid_top((x, y)), cell=(1.0, 1.0)))
+    add('A-CLERESTORY', draped(SC.ann(20.87, 20.93).difference(SC.RF_VOID), lambda x, y: RG.mid_under((x, y)), lambda x, y: RG.out_top((x, y)), cell=(1.0, 1.0)))
     add('A-MAST', cone(C, 0.42, 0.1, 0.9, SC.LV['mast']))
     s = trimesh.creation.icosphere(subdivisions=2, radius=0.25); s.apply_translation((C[0], C[1], SC.LV['mast'] + 0.25)); add('A-MAST', [s])
     # ---- facade fins (option A) + deck balustrades
@@ -185,10 +194,10 @@ def build():
         q0, q1 = p, p + fd * SC.FIN_D
         add('A-FIN', boxy([q0 - nn * 0.03, q1 - nn * 0.03, q1 + nn * 0.03, q0 + nn * 0.03], 5.4, top))
     for fl, z in (('L1', 5.4), ('L2', 9.6)):
-        add('A-BALU', flat(SC.ann(R_BR0, R_BR0 + 0.03), z, z + 1.1))
-        rooms_fp = unary_union([r['poly'] for r in plans.rooms(fl)]).buffer(0.15)
+        rooms_fp = unary_union([r['poly'] for r in plans.rooms(fl)] + [c['fp'] for c in CORES.values()]).buffer(0.15)
         for g in _polys(M.PLATE[fl]):
-            ring = LineString(g.exterior.coords).difference(rooms_fp)
+          for rg in [g.exterior] + list(g.interiors):
+            ring = LineString(rg.coords).difference(rooms_fp)
             for ln in getattr(ring, 'geoms', [ring]):
                 if ln.length > 0.3: add('A-BALU', flat(ln.buffer(0.015, cap_style=2).intersection(g.buffer(0.02)), z, z + 1.1))
     # ---- utility block, trees
@@ -278,35 +287,30 @@ def landscape3d(L):
     L['L-PLAY'] += flat(LS.play_poly(), 0.9, 0.93)
 
 def stairs(c, L):
-    """switchback flights as solid steps + landings, matching the plan (13 + 13 risers GF-L1, 12 + 12 L1-L2)"""
-    bc, sw, W = c['bc'], c['sw'], c['W']; f = lambda u, v: frame(bc, u, v)
-    ta = c['v_s0'] + sw; tb = c['v_s1'] - sw
-    runs = [(0.9, 5.4, 26)] + ([(5.4, 9.6, 24)] if c['to_l2'] else [])
-    for z0, z1, n in runs:
-        h = (z1 - z0) / n; half = n // 2; g = (tb - ta) / (half - 1) if half > 1 else M.GO
-        g = min(g, M.GO)
-        for i in range(half):                                            # flight A goes out (v increasing) on the u<0 side
-            v = ta + i * g; z = z0 + h * (i + 1)
-            L['A-STRS'] += boxy([f(-W / 2 + 0.1, v), f(-0.1, v), f(-0.1, v + g), f(-W / 2 + 0.1, v + g)], z - 0.25, z)
-        zl = z0 + h * half
-        L['A-STRS'] += boxy([f(-W / 2 + 0.1, tb), f(W / 2 - 0.1, tb), f(W / 2 - 0.1, c['v_s1'] - 0.1), f(-W / 2 + 0.1, c['v_s1'] - 0.1)], zl - 0.25, zl)
-        for i in range(n - half):                                        # flight B comes back on the u>0 side
-            v = tb - (i + 1) * g; z = zl + h * (i + 1)
-            L['A-STRS'] += boxy([f(0.1, v), f(W / 2 - 0.1, v), f(W / 2 - 0.1, v + g), f(0.1, v + g)], z - 0.25, z)
-        L['A-STRS'] += boxy([f(-W / 2 + 0.1, c['v_s0'] + 0.1), f(W / 2 - 0.1, c['v_s0'] + 0.1), f(W / 2 - 0.1, ta), f(-W / 2 + 0.1, ta)], z1 - 0.25, z1)
-    if c['key'] == 'S3':                                                  # open stair: glass balustrades
-        for u in (-W / 2, W / 2):
-            L['A-BALU'] += boxy([f(u - 0.015, c['v_s0']), f(u + 0.015, c['v_s0']), f(u + 0.015, c['v_s1']), f(u - 0.015, c['v_s1'])], 0.9, 10.7 if c['to_l2'] else 6.5)
+    """tangential switch-back flights as solid steps + landings, matching the plan and sections"""
+    f = c['f']; sw, vi, vo = c['sw'], c['vi'], c['vo']
+    q = lambda u0, u1, v0, v1: [f(u0, v0), f(u1, v0), f(u1, v1), f(u0, v1)]
+    for run in M.core_runs(c):
+        uA0, uA1, h, z0 = run['uA0'], run['uA1'], run['h'], run['z0']; zl = z0 + run['nA'] * h
+        for i in range(run['nA'] - 1):
+            z = z0 + h * (i + 1); L['A-STRS'] += boxy(q(uA0 + i * M.GO, uA0 + (i + 1) * M.GO, vi + 0.05, vi + sw), z - 0.25, z)
+        L['A-STRS'] += boxy(q(uA1, c['us1'], vi + 0.05, vo - 0.05), zl - 0.25, zl)
+        for j in range(run['nB'] - 1):
+            z = zl + h * (j + 1); L['A-STRS'] += boxy(q(uA1 - (j + 1) * M.GO, uA1 - j * M.GO, vo - sw, vo - 0.05), z - 0.25, z)
+        L['A-STRS'] += boxy(q(c['us0'] + 0.05, uA0, vi + 0.05, vo - 0.05), run['z1'] - 0.25, run['z1'])
 
-def s4_stair(L):
-    f = lambda u, v: frame(S4['bc'], u, v); w = S4['w']; h = 4.5 / 26; v = S4['v0']; z = 5.4
-    for i in range(13):
-        L['A-STRS'] += boxy([f(-w / 2, v), f(w / 2, v), f(w / 2, v + M.GO), f(-w / 2, v + M.GO)], z - h - 0.25, z - h); v += M.GO; z -= h
-    L['A-STRS'] += boxy([f(-w / 2, v), f(w / 2, v), f(w / 2, v + S4['land']), f(-w / 2, v + S4['land'])], z - 0.3, z); v += S4['land']
-    for i in range(13):
-        L['A-STRS'] += boxy([f(-w / 2, v), f(w / 2, v), f(w / 2, v + M.GO), f(-w / 2, v + M.GO)], z - h - 0.25, z - h); v += M.GO; z -= h
-    for u in (-w / 2, w / 2):
-        L['A-BALU'] += boxy([f(u - 0.015, S4['v0']), f(u + 0.015, S4['v0']), f(u + 0.015, S4['v1']), f(u - 0.015, S4['v1'])], 1.0, 6.5)
+def ext_stair3d(st, L):
+    f = st['f']; w = st['w']
+    q = lambda u0, u1, v0, v1: [f(u0, v0), f(u1, v0), f(u1, v1), f(u0, v1)]
+    for kind, u0, u1, z in st['parts']:
+        L['A-STRS'] += boxy(q(u0, u1, -w / 2, w / 2), z - (0.3 if kind == 'land' else 0.25), z)
+        for v in (-w / 2, w / 2): L['A-BALU'] += boxy(q(u0, u1, v - 0.015, v + 0.015), z, z + 1.0)
+    if st['kind'] == 'tangential':
+        q0 = P(R_L1 - 0.1, plans.brg(st['top']))
+        L['A-STRS'] += flat(LineString([q0, st['top']]).buffer(1.1, cap_style=2), 5.05, 5.4)
+    for u0, z0, u1, z1 in st['flights']:
+        for v in (-w / 2 + 0.3, w / 2 - 0.3):                          # raking steel stringers
+            L['A-STRS'] += prism([(*f(u0, v), z0 - 0.25), (*f(u1, v), z1 - 0.25)], 0.3, 0.06)
 
 # ------------------------------------------------------------------------------------------------ export
 def write_dae(layers, path):

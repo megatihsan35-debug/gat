@@ -6,10 +6,11 @@ from shapely.geometry import Point, LineString
 from shapely.ops import unary_union
 import plans
 import plan3 as M
-from plan3 import SC
+from plan3 import SC, P
 
-THROUGH_OK = {('G30', 'G31'), ('G32', 'G30'), ('L10', 'L12'), ('L11', 'L12'), ('G03', 'G04'), ('M10', 'M11'), ('M12', 'M13'), ('M02', 'M01')} | \
-             {(k, 'L20') for k in ('L21', 'L22', 'L23', 'L24', 'L25', 'L26', 'L27')}
+THROUGH_OK = {('G30', 'G31'), ('G32', 'G30'), ('G03', 'G04'), ('G09', 'G10'), ('M10', 'M11'), ('M12', 'M13')} | \
+             {(k, 'L20') for k in ('L21', 'L22', 'L23', 'L24', 'L27')}
+import rings as RG
 
 def run():
     bad = []
@@ -22,6 +23,7 @@ def run():
         for i, a in enumerate(rs):
             for b in rs[i + 1:]:
                 ov = a['poly'].intersection(b['poly']).area
+                if a['note'] and a['note'] == b['note']: continue                   # stair + lift of one core share a wall
                 if ov > 0.05: bad.append(('OVERLAP', fl, a['key'], b['key'], round(ov, 2)))
         for r in rs:
             out = r['poly'].difference(M.PLATE[fl].buffer(0.05)).area
@@ -37,22 +39,76 @@ def run():
             if q['fl'] == r['fl'] and q is not r and q['kind'] in ('room', 'wet', 'shop', 'stair', 'lift') and q['poly'].buffer(0.05).contains(p):
                 if (r['key'], q['key']) not in THROUGH_OK: bad.append(('DOOR INTO ANOTHER ROOM', d['key'], q['key']))
     for c in M.COLS:
+        if c['ring'] == 'P': continue                                              # bridge posts start at +5.400
         for r in M.ROOMS:
             if r['fl'] == 'GF' and r['kind'] in ('room', 'wet', 'shop') and r['poly'].buffer(-0.3).contains(Point(c['p'])):
                 bad.append(('COLUMN INSIDE ROOM', r['key'], c['lab'], c['ring']))
-    rises = {'GF-L1': 4.5 / 26, 'L1-L2': 4.2 / 24, 'S4': 4.5 / 26}
+    rises = {'GF-L1': 4.5 / 26, 'L1-L2': 4.2 / 24}
+    for k, s_ in M.EXT.items(): rises[k] = s_['h']
     for k, v in rises.items():
         if v > 0.180: bad.append(('RISER > 180', k, round(v * 1000)))
-    pts = []
-    for g in getattr(M.PLATE['L2'], 'geoms', [M.PLATE['L2']]): pts += list(g.exterior.coords)
-    l2clear = min(SC.roof_h(math.degrees(math.atan2(p[0] - M.C[0], p[1] - M.C[1])) % 360) for p in pts) - SC.ROOF_T - M.FFL['L2']
+    # ---- headroom under the roof tiers
+    l2clear = 99.0
+    for g in getattr(M.PLATE['L2'], 'geoms', [M.PLATE['L2']]):
+        for p in list(g.exterior.coords) + [P(r, b) for r in np.arange(9.5, 15.6, 0.5) for b in range(0, 360, 3)]:
+            if M.PLATE['L2'].buffer(0.01).contains(Point(p)): l2clear = min(l2clear, RG.roof_under_at(p) - M.FFL['L2'])
     if l2clear < 2.7 - 1e-6: bad.append(('L2 HEADROOM', round(l2clear, 2)))
+    l1clear = min(RG.roof_under_at(P(r, b)) - M.FFL['L1'] for r in np.arange(21.5, 26.6, 0.5) for b in range(0, 360, 3))
+    if l1clear < 3.0: bad.append(('OUTER RING HEADROOM', round(l1clear, 2)))
+    clr = [RG.clerestory(b) for b in range(360)]; cl_in, cl_out = min(c[0] for c in clr), min(c[1] for c in clr)
+    if min(cl_in, cl_out) < 1.2: bad.append(('CLERESTORY < 1.2 M', round(cl_in, 2), round(cl_out, 2)))
+    if RG.T_MID[1] - RG.T_OUT[0] < 0.5 or RG.R_FUN - RG.T_MID[0] < 0.5: bad.append(('TIERS DO NOT OVERLAP ENOUGH TO KEEP RAIN OUT',))
+    for b in range(0, 360, 5):
+        if abs(RG.mid_top(P(18, b)) - RG.out_top(P(25, b)) - RG.STEP) > 1e-6 or abs(RG.fun_rim(b) - RG.mid_top(P(18, b)) - RG.STEP) > 1e-6: bad.append(('TIER STEP NOT 1.8', b)); break
+    for c in M.CORES.values():
+        for g, top in [(c['fp'], c['top'])] + ([(c['tank'], c['tank_top'])] if c.get('tank') is not None else []):
+            pts = list(g.exterior.coords) + [tuple(g.centroid.coords[0])]
+            under = min(RG.roof_under_at(q) for q in pts)
+            if top > under - 0.15: bad.append(('CORE ABOVE THE ROOF', c['key'], top, round(under, 2)))
+    # ---- the bridge stands free: only the four walkways touch it
+    rings_ = unary_union([M.INNER, M.OUTER] + [c['fp'] for c in M.CORES.values()])
+    if rings_.distance(M.BRIDGE) < 0.3 - 1e-6: bad.append(('BRIDGE TOUCHES A RING / CORE', round(rings_.distance(M.BRIDGE), 2)))
+    pl = M.PLATE['L1'].difference(M.WALKWAYS.buffer(0.01))
+    comp = [g for g in getattr(pl, 'geoms', [pl]) if g.intersects(M.BRIDGE)]
+    if any(g.intersects(rings_.buffer(-0.01)) or g.distance(rings_) < 0.3 for g in comp): bad.append(('BRIDGE CONNECTED OTHER THAN BY THE WALKWAYS',))
+    if len([1 for s in SC.SPINES if M.WALKWAYS.intersects(Point(P(18.5, s['b'])))]) != 4: bad.append(('WALKWAYS != 4',))
+    for r in M.ROOMS:
+        if r['fl'] in ('L1', 'L2') and r['kind'] not in ('stair', 'lift') and r['poly'].intersects(M.GAPS.buffer(-0.05)): bad.append(('ROOM IN A GAP', r['key']))
+    # ---- exits
     occ = M.occupancy(); load = {}
     for fl, nm, a, f, n in occ: load[fl] = load.get(fl, 0) + n
     U = M.UNITS
-    cap = {'L1': 75 * (U['C1'] + U['C2'] + U['S3'] + U['S4']), 'L2': 75 * (U['C2'] + U['S3'])}
+    cap = {'L1': 75 * (U['C1'] + U['C2'] + U['S4'] + U['S5']), 'L2': 75 * (U['C1'] + U['C2'])}
     for fl in cap:
         if load[fl] > cap[fl]: bad.append(('EXIT CAPACITY', fl, load[fl], cap[fl]))
+    worst = {}
+    for fl in ('L1', 'L2'):
+        pl = M.PLATE[fl]; w = de = 0
+        for x in np.linspace(pl.bounds[0], pl.bounds[2], 70):
+            for y in np.linspace(pl.bounds[1], pl.bounds[3], 70):
+                if not pl.contains(Point(x, y)) or any(c['fp'].contains(Point(x, y)) for c in M.CORES.values()): continue
+                t = M.travel(fl, (x, y)); w = max(w, t[0][0]); de = max(de, min(leg for n, leg in M._nodes_of(fl, (x, y))))
+                if len(t) < 2: bad.append(('ONE EXIT ONLY', fl, round(x, 1), round(y, 1)))
+        worst[fl] = (round(w, 1), round(de, 1))
+        if w > 45.0: bad.append(('TRAVEL > 45', fl, round(w, 1)))
+        if de > 15.0: bad.append(('DEAD END > 15', fl, round(de, 1)))
+    for dd in M.CORE_DOORS:
+        q = np.array(dd['p']) + np.array(dd['n']) * 0.6
+        if any(r['fl'] == dd['fl'] and r['kind'] in ('room', 'wet', 'shop') and r['poly'].contains(Point(q)) for r in M.ROOMS): bad.append(('CORE DOOR INTO A ROOM', dd['key'], dd['fl']))
+        if dd['fl'] != 'GF' and not M.PLATE[dd['fl']].contains(Point(q)): bad.append(('CORE DOOR OFF THE FLOOR', dd['key'], dd['fl']))
+    # ---- services: stacks drop through rooms they belong to, dumbwaiter stacks
+    import services as SV
+    for p, lab, fls in SV.stacks():
+        for fl in fls:
+            if (lab, fl) in (('SVP N', 'GF'), ('SVP W2', 'L1')): continue                # boxed casings in open areas
+            if not any(r['fl'] == fl and r['kind'] in ('room', 'wet', 'shop') and r['poly'].buffer(-0.1).contains(Point(p)) for r in M.ROOMS): bad.append(('STACK NOT IN A ROOM', lab, fl))
+    for k in ('G11', 'L13'):
+        if not [r for r in M.ROOMS if r['key'] == k][0]['poly'].contains(M.DUMBWAITER): bad.append(('DUMBWAITER OUTSIDE', k))
+    for k, s_ in M.EXT.items():
+        import siteplan as ST_
+        for nm, g in (('HARDSTANDING', ST_.HS_S.union(ST_.HS_E)), ('YARD', ST_.YARD), ('UTILITY BLOCK', ST_.UB), ('PARKING', ST_.AISLE.union(unary_union([q for _, q in ST_.PARK])))):
+            if s_['poly'].intersects(g): bad.append(('EXTERNAL STAIR ON ' + nm, k))
+        if not s_['poly'].within(SC.SITE): bad.append(('EXTERNAL STAIR OFF SITE', k))
     # ---- entrance canopies + pocket gardens
     import landscape as LS, siteplan as ST, sections as SE
     for c in LS.CANOPIES:
@@ -96,7 +152,7 @@ def run():
     st = LS.seats()
     if st['total'] < 100: bad.append(('COURT SEATS < 100', st['total']))
     if LS.play_poly().area < 30: bad.append(('PLAY AREA < 30', round(LS.play_poly().area, 1)))
-    return bad, dict(load=load, cap=cap, seats=st['total'], canopy_hs_clear=round(hs, 2), outer=len(ST.OUTER), gate=len(ST.GATE), inner=len(LS.INNER), sky=len(LS.SKY), l2clear=round(l2clear, 2), rises={k: round(v * 1000) for k, v in rises.items()})
+    return bad, dict(load=load, cap=cap, travel=worst, seats=st['total'], canopy_hs_clear=round(hs, 2), outer=len(ST.OUTER), gate=len(ST.GATE), inner=len(LS.INNER), sky=len(LS.SKY), l2clear=round(l2clear, 2), l1clear=round(l1clear, 2), clerestory=(round(cl_in, 2), round(cl_out, 2)), rises={k: round(v * 1000) for k, v in rises.items()})
 
 if __name__ == '__main__':
     bad, info = run()

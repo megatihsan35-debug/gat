@@ -93,9 +93,14 @@ def column_pts(c):
             out.append(dict(s=s, side=side, base=g, tops=[xy(c, s - 1.4, side), xy(c, s + 1.4, side)], ztops=[z_edge(c, s - 1.4), z_edge(c, s + 1.4)]))
     return out
 def hangers(c):
+    """hangers drop from the first-floor soffit (+4.52) only where there is floor above: not under the two gaps that run
+    across the gate passage (there the edge beam spans between hangers and the lattice is seen from the bridge)"""
     out = []
-    for s in np.arange(c['R_in'] + 1.2, c['R_gate'] - 0.4, 2.4):
-        for side in (-1, 1): out.append((xy(c, s, side), z_edge(c, s), 4.52))
+    above = M.PLATE['L1'].buffer(-0.25)
+    for s in np.arange(c['R_in'] + 1.2, c['R_gate'] - 0.4, 1.2):
+        for side in (-1, 1):
+            q = xy(c, s, side)
+            if above.contains(Point(q)) and not any(np.hypot(*(np.array(q) - np.array(h[0]))) < 2.0 for h in out): out.append((q, z_edge(c, s), 4.52))
     return out
 
 CANOPY_FP = unary_union([outline(c) for c in CANOPIES])
@@ -160,16 +165,16 @@ def play_poly(): return ann_sec(PLAY_R[0], PLAY_R[1], *PLAY)
 
 # ------------------------------------------------------------------------------------------------ gate + outer pockets
 def sky_pockets():
-    """inner ring, upper level: planter troughs on the first-floor deck along the ring bridge (R13.0-14.2), cut every 15° with
-    2 m gaps on the same bearings as the escape routes, kept clear of rooms, cores, doors and the gate slots"""
+    """inner ring, upper level: planter troughs on the court balcony of the first floor, along its edge to the gap (R14.0-15.25), cut every 30° with
+    1.6 m gaps, kept clear of rooms, cores, doors and the walkway landings"""
     fl = 'L1'
-    band = SC.ann(13.0, 14.2).intersection(M.PLATE[fl])
+    band = SC.ann(14.0, 15.25).intersection(M.PLATE[fl])
     rooms = unary_union([r['poly'] for r in M.ROOMS if r['fl'] == fl and r['kind'] != 'open']).buffer(0.6)
-    cores = unary_union([c['stair_wall'] for c in M.CORES.values()] + [c['shaft_wall'] for c in M.CORES.values() if c['lift']]).buffer(1.0)
+    cores = unary_union([c['fp'] for c in M.CORES.values()]).buffer(1.0)
     doors = unary_union([Point(dd['p']).buffer(1.5) for dd in M.DOORS if [q for q in M.ROOMS if q['key'] == dd['key']][0]['fl'] == fl] +
                         [Point(dd['p']).buffer(1.5) for dd in M.CORE_DOORS if dd['fl'] == fl])
-    slots = unary_union([SC.strip(s['b'], s['w'] + 2.0) for s in SC.SPINES])
-    cuts = unary_union([LineString([P(12.0, b), P(15.0, b)]).buffer(1.0) for b in np.arange(0, 360, 15.0)])
+    slots = unary_union([SC.strip(s['b'], 3.3 + 1.6, 9.0, 16.0) for s in SC.SPINES])        # keep the walkway landings clear
+    cuts = unary_union([LineString([P(12.0, b), P(15.0, b)]).buffer(0.8) for b in np.arange(7.5, 360, 30.0)])
     g = band.difference(rooms).difference(cores).difference(doors).difference(slots).difference(cuts)
     return [q for q in getattr(g, 'geoms', [g]) if q.geom_type == 'Polygon' and q.area >= 1.5]
 SKY = sky_pockets()

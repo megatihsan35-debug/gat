@@ -54,7 +54,7 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     <canvas id="c" aria-label="3D model of Titik Temu. Drag to orbit, scroll or pinch to zoom."></canvas>
     <div class="hud">
       <h1>Titik Temu</h1>
-      <div class="sub">Simpul Rasa Semenanjung · v3 model</div>
+      <div class="sub">Simpul Rasa Semenanjung · v3.1 · ring bridge + stepped roof</div>
       <div class="cut" id="cutlabel">FULL BUILDING</div>
     </div>
     <div class="status" id="status">LOADING MODEL…</div>
@@ -76,6 +76,8 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
         <button id="v-top" data-view="top">Top down</button>
         <button id="v-canopy" data-view="canopy">Under the canopy</button>
         <button id="v-garden" data-view="garden">Garden ring</button>
+        <button id="v-bridge" data-view="bridge">On the ring bridge</button>
+        <button id="v-tiers" data-view="tiers">Roof tiers</button>
       </div>
     </div>
     <div class="grp">
@@ -92,7 +94,7 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     <div class="grp">
       <h2>Show</h2>
       <div class="toggles" id="toggles">
-        <button id="t-roof" data-grp="roof" aria-pressed="true">Roof + funnel</button>
+        <button id="t-roof" data-grp="roof" aria-pressed="true">Roof tiers</button>
         <button id="t-fins" data-grp="fins" aria-pressed="true">Façade fins</button>
         <button id="t-glass" data-grp="glass" aria-pressed="true">Glass</button>
         <button id="t-site" data-grp="site" aria-pressed="true">Site + trees</button>
@@ -105,11 +107,12 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
       <table>
         <tr><td>Site datum</td><td>±0.000</td></tr>
         <tr><td>Ground floor, court</td><td>+0.900</td></tr>
-        <tr><td>First floor (hanging)</td><td>+5.400</td></tr>
+        <tr><td>First floor (inner + outer ring)</td><td>+5.400</td></tr>
         <tr><td>Second floor</td><td>+9.600</td></tr>
-        <tr><td>Roof low · Timur, Tengah</td><td>+10.200</td></tr>
-        <tr><td>Funnel rim</td><td>+13.500</td></tr>
-        <tr><td>Roof high · Selatan, Utara</td><td>+16.200</td></tr>
+        <tr><td>Ring bridge (free-standing)</td><td>+5.400</td></tr>
+        <tr><td>Outer tier · low / high</td><td>+10.2 / +16.2</td></tr>
+        <tr><td>Middle tier · low / high</td><td>+12.0 / +18.0</td></tr>
+        <tr><td>Funnel rim · low / high</td><td>+13.8 / +19.8</td></tr>
         <tr><td>Mast</td><td>+30.000</td></tr>
       </table>
     </div>
@@ -153,9 +156,11 @@ td:last-child { text-align: right; font-family: var(--f-mono); font-size: 12px; 
     top:    { pos: [0, 120, 0.01], tgt: [0, 0, 0],  fov: 40 },
     canopy: { pos: [-1.4, 1.65, 29.5], tgt: [0.2, 3.6, 0], fov: 64 },
     garden: { pos: [-44, 9, -26], tgt: [-26, 1, -12], fov: 50 },
+    bridge: { pos: [9.25, 7.05, 16.0], tgt: [16.0, 7.2, 9.25], fov: 70 },
+    tiers:  { pos: [-52, 46, 40], tgt: [0, 12, 0], fov: 38 },
   };
   const GROUPS = {
-    roof: ['A-ROOF', 'A-FASCIA', 'A-FUNNEL'], fins: ['A-FIN'], glass: ['A-GLAZ', 'A-BALU'],
+    roof: ['A-ROOF', 'A-ROOF-MID', 'A-FASCIA', 'A-FUNNEL', 'A-CLERESTORY'], fins: ['A-FIN'], glass: ['A-GLAZ', 'A-BALU', 'A-ROOFLIGHT'],
     site: ['SITE-LAWN', 'SITE-PAVING', 'SITE-ROAD', 'SITE-TREE', 'SITE-TRUNK', 'A-UTIL'],
     canopy: ['L-CANP-RIB', 'L-CANP-PANEL', 'L-CANP-GLASS', 'L-CANP-COL'], garden: ['L-PLANTER', 'L-SOIL', 'L-PLANT'],
   };

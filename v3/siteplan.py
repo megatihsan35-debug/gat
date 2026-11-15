@@ -7,11 +7,12 @@ from shapely.ops import unary_union, polylabel
 from shapely import affinity
 from cad import Drawing, INK
 import plan3 as M
-from plan3 import C, P, d, tdir, SC, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS, S4
+from plan3 import C, P, d, tdir, SC, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS, S4, EXT
+import rings as RG
 import plans
 
 R_ROOF, R_DISC = SC.R_ROOF, SC.R_DISC
-ROOF_FP = SC.ann(M.R_ROOF_IN, R_ROOF).difference(SC.RF_VOID)
+ROOF_FP = RG.OUT_FP                                       # outer tier (the middle tier and the funnel are RG.MID_FP / RG.FUN_FP)
 BLUE = '#1F6FB2'; CYAN = '#1AA0C8'; BROWN = '#8A5A2B'; RED = '#D0312D'; GREEN = '#3E7D3A'; MAG = '#9B2D8E'; ORANGE = '#C9690A'
 def brg(p): v = np.array(p) - C; return math.degrees(math.atan2(v[0], v[1])) % 360
 def rad(p): return float(np.hypot(*(np.array(p) - C)))
@@ -33,10 +34,13 @@ def rwdp_points():
     return out
 RWDP = rwdp_points()
 def rain_calc():
-    A_roof = ROOF_FP.area; A_fun = SC.ann(R_OCULUS, R_DISC).area
-    q = lambda A: I_RAIN / 3600.0 * A                      # L/s with C = 1.0 (A in m2, I in mm/h -> L/s)
+    """outer + middle tiers drain to the perimeter downpipes (the middle tier spills onto the outer tier through spouts);
+    the funnel drains to the oculus and the Titik pool. Plan areas, C = 1.0."""
+    A_out = RG.OUT_FP.area + RG.SLOT_GLASS.area; A_mid = RG.MID_FP.difference(RG.OUT_FP).difference(RG.SLOT_GLASS).area
+    A_roof = A_out + A_mid; A_fun = RG.FUN_FP.area
+    q = lambda A: I_RAIN / 3600.0 * A
     n = len(RWDP)
-    return dict(A_roof=A_roof, A_fun=A_fun, Q_roof=q(A_roof), Q_fun=q(A_fun), n=n, per=q(A_roof) / n)
+    return dict(A_roof=A_roof, A_out=A_out, A_mid=A_mid, A_fun=A_fun, Q_roof=q(A_roof), Q_fun=q(A_fun), n=n, per=q(A_roof) / n)
 
 def arrow(D, a, b, layer, color, lw=0.18, head=0.45):
     a, b = np.array(a), np.array(b); t = (b - a) / np.linalg.norm(b - a); n = np.array([-t[1], t[0]])
@@ -45,53 +49,71 @@ def arrow(D, a, b, layer, color, lw=0.18, head=0.45):
 
 # ------------------------------------------------------------------------------------------------ roof plan
 def roof_drawing():
+    """three stepped tiers, each 1.8 m above the one outside it, all following the wave: outer tier (R20.6-28.3), middle tier
+    over the ring bridge (R15.9-21.2), funnel over the inner ring + court (R1.5-16.6). Clerestories where they overlap."""
     D = Drawing('ROOF PLAN')
     D.poly(SC.disc(R_L1), 'A-HIDN', edge='#9AA3AD', lw=0.13, ls='--', z=1)
-    D.poly(ROOF_FP, 'A-ROOF', fill='#EEF0F2', edge=INK, lw=0.35, z=2)
-    # standing seams run along the fall: arcs every 1.0 m
-    for r in np.arange(M.R_ROOF_IN + 0.5, R_ROOF, 1.0):
-        for g in getattr(SC.disc(r).exterior.intersection(ROOF_FP), 'geoms', []):
+    # outer tier: standing seams along the fall (round the ring), gutters, fall arrows, levels
+    D.poly(RG.OUT_FP, 'A-ROOF', fill='#EEF0F2', edge=INK, lw=0.35, z=2)
+    for r in np.arange(RG.T_OUT[0] + 0.5, R_ROOF, 1.0):
+        for g in getattr(SC.disc(r).exterior.intersection(RG.OUT_FP), 'geoms', []):
             if g.geom_type == 'LineString' and g.length > 0.5: D.line(list(g.coords), 'A-ROOF', lw=0.05, color='#9AA3AD', z=3)
-    # concealed perimeter gutter + valley gutters at the low gates
-    D.poly(SC.ann(R_ROOF - 0.45, R_ROOF - 0.05).intersection(ROOF_FP), 'P-RAIN', fill='#D8ECF7', edge=CYAN, lw=0.09, z=4)
+    D.poly(SC.ann(R_ROOF - 0.45, R_ROOF - 0.05).intersection(RG.OUT_FP), 'P-RAIN', fill='#D8ECF7', edge=CYAN, lw=0.09, z=4)
     for s in LOW:
         for sg in (-1, 1):
             off = tdir(s['b']) * sg * ((s['gap'] - 1.0) / 2 + 0.25)
-            D.poly(LineString([C + d(s['b']) * M.R_ROOF_IN + off, C + d(s['b']) * (R_ROOF - 0.3) + off]).buffer(0.25, cap_style=2), 'P-RAIN', fill='#D8ECF7', edge=CYAN, lw=0.09, z=4)
-            arrow(D, C + d(s['b']) * 16 + off, C + d(s['b']) * 22 + off, 'P-RAIN', CYAN, lw=0.13, head=0.4)
-    # fall arrows (tangential, towards the valleys) + 3° radial cross fall to the perimeter gutter
+            D.poly(LineString([C + d(s['b']) * RG.T_OUT[0] + off, C + d(s['b']) * (R_ROOF - 0.3) + off]).buffer(0.25, cap_style=2), 'P-RAIN', fill='#D8ECF7', edge=CYAN, lw=0.09, z=4)
+            arrow(D, C + d(s['b']) * 22.5 + off, C + d(s['b']) * 26.5 + off, 'P-RAIN', CYAN, lw=0.13, head=0.4)
+    # glazed slots on the gate axes (over the walkways / gate passages)
+    D.poly(RG.SLOT_GLASS, 'A-GLAZ', fill='#DCEBF3', edge='#5E9CBB', lw=0.13, z=4.5)
+    # middle tier over the bridge, drawn over the outer tier (its outer edge overlaps the outer tier: the outer clerestory)
+    D.poly(RG.MID_FP, 'A-ROOF', fill='#E4E7EA', edge=INK, lw=0.35, z=5)
+    for r in np.arange(RG.T_MID[0] + 0.6, RG.T_MID[1], 1.0):
+        for g in getattr(SC.disc(r).exterior.intersection(RG.MID_FP), 'geoms', []):
+            if g.geom_type == 'LineString' and g.length > 0.5: D.line(list(g.coords), 'A-ROOF', lw=0.05, color='#9AA3AD', z=5.2)
+    D.arc(C, RG.T_OUT[0], 0, 360, 'A-HIDN', lw=0.1, color='#6B7480', ls='--', z=5.3)                 # outer tier edge below
+    # funnel over everything inside (its rim overlaps the middle tier: the inner clerestory)
+    fun = RG.FUN_FP
+    D.poly(fun, 'A-ROOF', fill='#F7F7F8', edge=INK, lw=0.35, z=6)
+    D.arc(C, RG.T_MID[0], 0, 360, 'A-HIDN', lw=0.1, color='#6B7480', ls='--', z=6.2)                 # middle tier edge below
+    for b in np.arange(0, 360, 7.5): D.line([P(R_OCULUS + 0.2, b), P(RG.R_FUN - 0.2, b)], 'A-ROOF', lw=0.05, color='#9AA3AD', z=6.1)
+    for b in range(15, 360, 45): arrow(D, P(12.0, b), P(5.0, b), 'P-RAIN', CYAN, lw=0.18, head=0.5)
+    D.circle(C, R_OCULUS, 'A-ROOF', fill='#D8ECF7', edge=CYAN, lw=0.2, z=6.5)
+    D.circle(C, 0.18, 'A-COLS', fill=INK, edge=None, z=7)
+    # fall arrows + levels per petal on the outer and middle tiers, rim levels on the funnel
     for p in SC.PETALS:
         for k in range(1, 8):
             b = p['b0'] + p['span'] * k / 8; h0 = SC.roof_h(b); h1 = SC.roof_h(b + 2.5)
             sgn = 1 if h1 < h0 else -1
-            for r in (16.5, 22.5):
-                a = P(r, b); bb = P(r, b + sgn * math.degrees(3.4 / r)); arrow(D, a, bb, 'A-ROOF', INK, lw=0.13, head=0.42)
-            D.text(P(25.2, b), f'+{SC.roof_h(b):.2f}', 'A-ROOF', size=1.6, rot=0, color=INK, halo=True)
-            arrow(D, P(19.5, b + 1.2), P(21.0, b + 1.2), 'A-ROOF', '#6B7480', lw=0.09, head=0.3)
+            a = P(24.3, b); bb = P(24.3, b + sgn * math.degrees(3.4 / 24.3)); arrow(D, a, bb, 'A-ROOF', INK, lw=0.13, head=0.42)
+            if k % 2 == 1:
+                D.text(P(26.6, b), f'+{SC.roof_h(b):.2f}', 'A-ROOF', size=1.5, color=INK, halo=True)
+                D.text(P(18.5, b), f'+{SC.roof_h(b) + RG.STEP:.2f}', 'A-ROOF', size=1.4, color=INK, halo=True)
+                D.text(P(14.6, b), f'RIM +{RG.fun_rim(b):.2f}', 'A-ROOF', size=1.3, color=INK, halo=True, z=9)
+            arrow(D, P(19.6, b + 1.2), P(20.9, b + 1.2), 'P-RAIN', CYAN, lw=0.1, head=0.3)              # middle tier spills outward
     for s in SC.SPINES:
-        D.text(P(29.6, s['b']), f"{s['k']} GATE\nRIDGE +{SC.roof_h(s['b']):.3f}" if s['crest'] else f"{s['k']} GATE\nVALLEY +{SC.roof_h(s['b']):.3f}", 'A-ANNO', size=1.8, weight='bold', halo=True)
-    # funnel roof over the court: falls to the oculus, rain drops into the Titik pool
-    fun = SC.ann(R_OCULUS, R_DISC)
-    D.poly(fun, 'A-ROOF', fill='#F7F7F8', edge=INK, lw=0.3, z=2)
-    for b in np.arange(0, 360, 7.5): D.line([P(R_OCULUS + 0.2, b), P(R_DISC - 0.2, b)], 'A-ROOF', lw=0.05, color='#9AA3AD', z=3)
-    for b in range(15, 360, 45): arrow(D, P(10.0, b), P(5.0, b), 'P-RAIN', CYAN, lw=0.18, head=0.5)
-    D.circle(C, R_OCULUS, 'A-ROOF', fill='#D8ECF7', edge=CYAN, lw=0.2, z=4)
-    D.circle(C, 0.18, 'A-COLS', fill=INK, edge=None, z=6)
-    D.text(P(6.6, 200), 'FUNNEL ROOF +13.500 RIM\nFALLS TO OCULUS +11.400', 'A-ANNO', size=1.8, halo=True)
-    D.text(C + np.array([0, -2.3]), 'OCULUS Ø3000 · RAIN TO TITIK POOL', 'A-ANNO', size=1.5, halo=True)
+        D.text(P(29.8, s['b']), f"{s['k']} GATE\nOUTER +{SC.roof_h(s['b']):.3f}" + (' RIDGE' if s['crest'] else ' VALLEY'), 'A-ANNO', size=1.7, weight='bold', halo=True)
+    D.text(P(6.6, 200), 'FUNNEL ROOF: RIM 3.6 M ABOVE THE OUTER TIER\nFALLS TO OCULUS +11.400', 'A-ANNO', size=1.6, halo=True, z=9)
+    D.text(C + np.array([0, -2.3]), 'OCULUS Ø3000 · RAIN TO TITIK POOL', 'A-ANNO', size=1.5, halo=True, z=9)
+    for bb, txt in ((128.0, 'INNER CLERESTORY\n(FUNNEL OVER MIDDLE TIER)'), (300.0, 'OUTER CLERESTORY\n(MIDDLE OVER OUTER TIER)')):
+        rr_ = 16.25 if 'INNER' in txt else 20.9
+        lead_p = P(rr_, bb); D.circle(lead_p, 0.25, 'A-ANNO', fill=INK, edge=None, z=9)
+        D.line([lead_p, P(rr_ + (6 if 'OUTER' in txt else -3.5), bb + 6)], 'A-ANNO', lw=0.1, color=INK, z=9)
+        D.text(P(rr_ + (6 if 'OUTER' in txt else -3.5), bb + 9), txt, 'A-ANNO', size=1.4, halo=True, z=9)
+    D.text(P(18.5, 160), 'MIDDLE TIER OVER THE RING BRIDGE\n(+1.800 ABOVE THE OUTER TIER)', 'A-ANNO', size=1.4, halo=True, rot=-(160 - 90), z=9)
     # downpipes
     for p, kind in RWDP:
         D.circle(p, 0.2, 'P-RAIN', fill='white', edge=CYAN, lw=0.25, z=7)
     D.text(RWDP[0][0] + np.array([0.6, 0.5]), 'RWDP Ø150', 'P-RAIN', size=1.5, color=CYAN, ha='left', halo=True)
-    # core 2 tank room below the roof (dashed) + roof access hatch
-    c2 = M.CORES['C2']; D.poly(plans.M._corefp(c2), 'A-HIDN', edge='#6B7480', lw=0.13, ls='--', z=5)
-    D.text(plans.frame(c2['bc'], 0, (c2['v_s0'] + c2['v_s1']) / 2), 'CORE 2 TANK ROOM\nBELOW ROOF, FL +12.900\nCOLD WATER TANK 7.2 M³', 'P-EQPT', size=1.6, color=BLUE, halo=True)
-    D.poly(Polygon([plans.frame(c2['bc'], -0.4, c2['v_s1'] - 0.9), plans.frame(c2['bc'], 0.4, c2['v_s1'] - 0.9), plans.frame(c2['bc'], 0.4, c2['v_s1'] - 0.1), plans.frame(c2['bc'], -0.4, c2['v_s1'] - 0.1)]), 'A-ROOF', fill='white', edge=INK, lw=0.18, z=6)
-    D.text(plans.frame(c2['bc'], 1.3, c2['v_s1'] - 0.5), 'ROOF\nHATCH', 'A-ANNO', size=1.3, ha='left', halo=True)
+    # core 2 tank room under the funnel (dashed) + access hatch from the stair
+    c2 = M.CORES['C2']; D.poly(c2['fp'], 'A-HIDN', edge='#6B7480', lw=0.13, ls='--', z=8)
+    cm = np.array(c2['fp'].centroid.coords[0])
+    D.text(cm + (cm - C) / np.linalg.norm(cm - C) * -2.6, 'CORE 2 TANK ROOM UNDER\nTHE FUNNEL, FL +12.200\nCW TANK 7.2 M³', 'P-EQPT', size=1.4, color=BLUE, halo=True, z=9)
     for c in LS.CANOPIES: canopy_plan(D, c, solid=True, region=SC.disc(80).difference(SC.disc(R_ROOF)))
+    for st_ in EXT.values(): D.poly(st_['poly'].difference(SC.disc(R_ROOF)), 'A-STRS', fill='white', edge=INK, lw=0.13, z=3)
     plans.grid(D, 'RF', color='#B9C0C7'); plans.section_marks(D)
     D.circle(C, 0.25, 'M-ELEC', edge=MAG, lw=0.2, z=7)
-    D.text(C + np.array([1.2, 1.0]), 'MAST +30.000 · AIR TERMINAL', 'M-ELEC', size=1.4, color=MAG, ha='left', halo=True)
+    D.text(C + np.array([1.2, 1.0]), 'MAST +30.000 · AIR TERMINAL', 'M-ELEC', size=1.4, color=MAG, ha='left', halo=True, z=9)
     return D
 
 # ------------------------------------------------------------------------------------------------ site elements
@@ -184,7 +206,7 @@ def _outer_exclude():
           TERRACE.buffer(1.0), UB.buffer(1.5), OSD.buffer(0.5), Point(ASSEMBLY).buffer(3.0)]
     g += [k.buffer(0.8) for _, k in PARK] + [k.buffer(0.8) for k in MOTOR + BIKES] + [Point(p).buffer(1.5) for p, _ in HYDRANTS]
     g += [LineString(v).buffer(1.0) for v in SERVICE_LINES.values()] + [LineString(SEWER[k]).buffer(1.0) for k in ('east', 'north', 'west')]
-    g += [Point(WATER_IN).buffer(1.5)]
+    g += [Point(WATER_IN).buffer(1.5)] + [st_['poly'].buffer(1.5) for st_ in EXT.values()]
     return unary_union(g)
 OUTER = LS.outer_pockets(_outer_exclude())
 GATE = LS.gate_pockets()
@@ -231,12 +253,12 @@ def site_drawing(services=True):
     D.text(P(S4['v1'] + 1.5, 284.5), 'ARRIVAL GARDEN\nTERRACE +0.900\n5 STEPS + 1:12 RAMP', 'A-ANNO', size=1.6, halo=True)
     # building
     D.poly(SC.GF, 'A-WALL', fill='#C9CED4', edge=INK, lw=0.25, z=3)
-    for c in M.CORES.values(): D.poly(c['stair_wall'], 'A-WALL', fill='#5B6570', edge=None, z=3.2)
+    for c in M.CORES.values(): D.poly(c['fp'], 'A-WALL', fill='#5B6570', edge=None, z=3.2)
     D.poly(SC.disc(R_COURT), 'A-SITE', fill='#FBF6E9', edge=INK, lw=0.18, z=3); D.circle(C, R_POOL, 'A-SITE', fill='#D8ECF7', edge=INK, lw=0.13, z=3.1)
-    D.poly(ROOF_FP, 'A-ROOF', fill=None, edge=INK, lw=0.35, ls='--', z=4); D.circle(C, R_DISC, 'A-ROOF', edge=INK, lw=0.18, ls='--', z=4)
-    D.poly(S4['poly'], 'A-STRS', fill='white', edge=INK, lw=0.13, z=3.5)
+    D.poly(ROOF_FP, 'A-ROOF', fill=None, edge=INK, lw=0.35, ls='--', z=4); D.circle(C, RG.T_MID[0], 'A-ROOF', edge=INK, lw=0.15, ls='--', z=4); D.circle(C, RG.R_FUN, 'A-ROOF', edge=INK, lw=0.18, ls='--', z=4)
+    for st_ in EXT.values(): D.poly(st_['poly'], 'A-STRS', fill='white', edge=INK, lw=0.13, z=3.5)
     landscape_plan(D, site=True)
-    D.text(C + np.array([0, -5.0]), 'TITIK TEMU\nGF +0.900 · L1 +5.400 · L2 +9.600\nROOF +10.200 TO +16.200 · MAST +30.000', 'A-ANNO', size=2.2, weight='bold', halo=True)
+    D.text(C + np.array([0, -5.0]), 'TITIK TEMU\nGF +0.900 · L1 +5.400 · L2 +9.600\nROOF TIERS +10.2 / +12.0 / +13.8 TO +16.2 / +18.0 / +19.8 · MAST +30.000', 'A-ANNO', size=2.2, weight='bold', halo=True)
     # utility block + yard + hardstandings + parking
     D.poly(YARD, 'A-SITE', fill='#E6E8EB', edge='#7A8590', lw=0.13, z=1.5)
     D.poly(UB, 'A-WALL', fill='#C9CED4', edge=INK, lw=0.3, z=3)

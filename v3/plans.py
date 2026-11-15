@@ -7,7 +7,8 @@ from shapely.geometry import Polygon, Point, LineString, MultiLineString, box
 from shapely.ops import unary_union, linemerge, polylabel, nearest_points
 from cad import Drawing, INK
 import plan3 as M
-from plan3 import C, P, d, tdir, frame, ROOMS, CORES, S4, FFL, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS, QIBLA, SC
+from plan3 import C, P, d, tdir, frame, ROOMS, CORES, S4, EXT, FFL, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS, QIBLA, SC
+import rings as RG
 
 GREY = '#9AA3AD'; LGREY = '#C9CED4'; PALE = '#E9ECEF'
 WALL_T = dict(ext=0.20, int=0.125, wet=0.15, fire=0.20)
@@ -19,19 +20,9 @@ def rad(p): return float(np.hypot(*(np.array(p) - C)))
 
 # ------------------------------------------------------------------------------------------------ walls
 def core_walls(fl):
-    out = []
-    for c in core_list(fl):
-        if c['key'] == 'S3': continue
-        out.append(c['stair_wall'].difference(c['stair']))
-        if c['lift']: out.append(c['shaft_wall'].difference(c['shaft']))
-    return unary_union(out)
+    return unary_union([c['fp'].difference(c['holes']) for c in core_list(fl)])
 def core_solid(fl):
-    out = []
-    for c in core_list(fl):
-        if c['key'] == 'S3': continue
-        out.append(c['stair_wall'])
-        if c['lift']: out.append(c['shaft_wall'])
-    return unary_union(out)
+    return unary_union([c['fp'] for c in core_list(fl)])
 
 def walls(fl):
     """returns dict(solid=polygon, glaz=[LineString], rated=polygon, segments=list)"""
@@ -54,7 +45,8 @@ def walls(fl):
                 if r['occ'] == 'plant': th = WALL_T['fire']; rated.append(seg.buffer(th / 2, cap_style=3))
                 solid.append(seg.buffer(th / 2, cap_style=3))
             else:
-                inner = abs(rad(m) - R_BR1) < 0.08
+                radial = abs(float(np.dot(t, (m - C) / np.linalg.norm(m - C)))) > 0.7
+                inner = (not radial) and rad(m) < rad(np.array(g.centroid.coords[0]))
                 style = r['inner'] if inner else r['facade']
                 if style == 'glass': glaz.append(seg)
                 else: solid.append(seg.buffer(WALL_T['ext'] / 2, cap_style=3))
@@ -76,11 +68,8 @@ def door_list(fl):
         out.append(dict(p=q, t=t, sw=sw, w=dd['w'], kind=dd['kind'], tag=dd['tag'], fire=dd['fire'], key=dd['key']))
     for dd in M.CORE_DOORS:
         if dd['fl'] != fl: continue
-        c = CORES[dd['key'].split('-')[0]]
-        if dd['axis'] == 'v': t = tdir(c['bc']); n = d(c['bc'])            # wall runs across the radial axis
-        else: t = d(c['bc']); n = tdir(c['bc']) * c['side']
+        t, n = np.array(dd['t']), np.array(dd['n'])                          # n points out of the core, towards the court
         sw = n if dd['swing'] in ('out', 'lift') else -n
-        if dd['axis'] == 'v' and dd['swing'] == 'lift': sw = -d(c['bc'])
         out.append(dict(p=np.array(dd['p']), t=t, sw=sw, w=dd['w'], kind=dd['kind'], tag=dd['tag'], fire=dd['fire'], key=dd['key']))
     return out
 
@@ -212,7 +201,7 @@ def staff_restroom(D, r, color):
 
 def parents_room(D, r, color):
     if r['key'] == 'G04':
-        F = Wall(r, 'cw'); r0, r1 = _rr(r)
+        F = Wall(r, 'acw'); r0, r1 = _rr(r)
         counter(D, F, r0 + 0.5, r0 + 1.9, 0, 0.65, color); sink(D, F, r0 + 0.85, 0, color)
         D.text(F.W(r0 + 1.45, 0.33), 'CHANGING', 'A-FIXT', size=1.0, color=color)
     else:
@@ -244,6 +233,11 @@ def shop_fit(D, r, color):
     D.text(F.W(rr - 1.5, 0.95), 'PREP + CASHIER', 'A-FIXT', size=1.2, color=color)
     counter(D, F, r0 + 0.9, r0 + 3.0, 0.0, 0.45, color)
 
+def dumbwaiter(D, color):
+    g = M.DUMBWAITER; D.poly(g, 'A-FIXT', edge=color, lw=0.13)
+    cs = list(g.exterior.coords); D.line([cs[0], cs[2]], 'A-FIXT', lw=0.07, color=color); D.line([cs[1], cs[3]], 'A-FIXT', lw=0.07, color=color)
+    c = np.array(g.centroid.coords[0]); D.text(c + (c - C) / np.linalg.norm(c - C) * -1.0, 'DUMBWAITER', 'A-FIXT', size=1.1, color=color, halo=True)
+
 def fit(D, fl, color=INK):
     for r in rooms(fl):
         k, nm = r['key'], r['name']
@@ -274,7 +268,7 @@ def fit(D, fl, color=INK):
             F = Wall(r, 'acw'); rs = [rad(c) for c in r['poly'].exterior.coords]; r0, r1 = min(rs), max(rs)
             counter(D, F, r0 + 2.0, r0 + 5.5, 0, 0.7, color); D.text(F.W(r0 + 3.7, 1.1), 'SERVING COUNTER', 'A-FIXT', size=1.2, color=color)
             bm, b0, b1 = M.mid(k)
-            for rr, bb in ((19.0, bm - 1.5), (19.0, bm + 3.5), (21.2, bm - 1.0), (21.2, bm + 3.0), (16.6, bm + 2.5)):
+            for rr, bb in ((18.4, bm - 3.0), (18.4, bm + 3.5), (21.0, bm - 4.0), (21.0, bm + 0.5), (21.0, bm + 5.0)):
                 D.circle(P(rr, bb), 0.38, 'A-FURN', fill='white', edge=color, lw=0.08)
                 for j in range(4): D.circle(P(rr, bb) + np.array([math.cos(j * math.pi / 2), math.sin(j * math.pi / 2)]) * 0.62, 0.17, 'A-FURN', edge=color, lw=0.07)
         elif k == 'G21':
@@ -289,39 +283,40 @@ def fit(D, fl, color=INK):
             F = Wall(r, 'acw'); rs = [rad(c) for c in r['poly'].exterior.coords]
             counter(D, F, min(rs) + 0.4, min(rs) + 1.0, 0, 0.6, color, fill=PALE); D.text(F.W(min(rs) + 0.7, 0.3), 'RACK', 'A-FIXT', size=1.0, color=color)
         elif k == 'G11':
-            F = Wall(r, 'cw'); rs = [rad(c) for c in r['poly'].exterior.coords]; r0, r1 = min(rs), max(rs)
+            F = Wall(r, 'cw'); r1 = R_GF
             for i in range(3): counter(D, F, r1 - 0.4 - (i + 1) * 1.3, r1 - 0.4 - i * 1.3 - 0.1, 0, 0.75, color); D.text(F.W(r1 - 0.4 - i * 1.3 - 0.65, 0.38), 'FZ', 'A-FIXT', size=1.0, color=color)
-            G = Wall(r, 'acw'); D.poly(G.rect(r0 + 0.5, r0 + 1.3, 0, 0.8), 'A-FIXT', edge=color, lw=0.13); D.line([G.W(r0 + 0.5, 0), G.W(r0 + 1.3, 0.8)], 'A-FIXT', lw=0.07, color=color)
-            D.text(G.W(r0 + 0.9, 1.15), 'DUMBWAITER', 'A-FIXT', size=1.1, color=color)
-        elif k == 'L13':                           # same shaft position as in G11 below (stacked dumbwaiter)
-            G = Wall([q for q in ROOMS if q['key'] == 'G11'][0], 'acw'); r0 = R_BR1
-            D.poly(G.rect(r0 + 0.5, r0 + 1.3, 0, 0.8), 'A-FIXT', edge=color, lw=0.13); D.line([G.W(r0 + 0.5, 0), G.W(r0 + 1.3, 0.8)], 'A-FIXT', lw=0.07, color=color)
-            D.text(G.W(r0 + 0.9, 1.15), 'DUMBWAITER', 'A-FIXT', size=1.1, color=color)
+            dumbwaiter(D, color)
+        elif k == 'L13':                           # same shaft as in G11 below (stacked dumbwaiter)
+            dumbwaiter(D, color)
+            F = Wall(r, 'cw'); counter(D, F, 21.8, 24.7, 0, 0.5, color); D.text(F.W(23.2, 0.25), 'SHELVES', 'A-FIXT', size=1.0, color=color)
         elif k == 'L12':
             bm, b0, b1 = M.mid(k)
-            for rr in (21.0, 23.4):
-                for bb in (bm - 4.5, bm + 1.0, bm + 6.5):
-                    D.poly(LineString([P(rr, bb - 1.6), P(rr, bb + 1.6)]).buffer(0.38, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
-            D.poly(LineString([P(25.3, bm - 2.0), P(25.3, bm + 2.0)]).buffer(0.45, cap_style=2), 'A-FURN', fill=PALE, edge=color, lw=0.1)
-            D.text(P(25.3, bm), 'DEMO KITCHEN ISLAND', 'A-FURN', size=1.1, color=color)
+            for rr in (22.75, 24.95):
+                for bb in np.linspace(b0 + 5.5, b1 - 9.0, 3):
+                    D.poly(LineString([P(rr, bb - 2.6), P(rr, bb + 2.6)]).buffer(0.38, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
+            bi = b1 - 3.6
+            D.poly(LineString([P(22.6, bi), P(25.4, bi)]).buffer(0.5, cap_style=2), 'A-FURN', fill=PALE, edge=color, lw=0.1)
+            D.text(P(24.0, bi - 1.8), 'DEMO KITCHEN\nISLAND', 'A-FURN', size=1.1, color=color)
         elif k == 'L24':
             bm, b0, b1 = M.mid(k)
-            for i, bb in enumerate(np.linspace(b0 + 2.4, b1 - 2.4, 3)):
-                for rr in (21.6, 24.2):
-                    D.poly(Point(P(rr, bb)).buffer(0.0).buffer(0.01) if False else LineString([P(rr, bb - 0.8), P(rr, bb + 0.8)]).buffer(0.35, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
+            for i, bb in enumerate(np.linspace(b0 + 3.0, b1 - 3.0, 3)):
+                for rr in (22.35, 24.1):
+                    D.poly(LineString([P(rr, bb - 1.6), P(rr, bb + 1.6)]).buffer(0.35, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
         elif k == 'L25':
-            bm, b0, b1 = M.mid(k); D.poly(LineString([P(23.6, bm - 1.2), P(23.6, bm + 1.2)]).buffer(0.4, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
+            bm, b0, b1 = M.mid(k); D.poly(LineString([P(14.2, bm - 4.0), P(14.2, bm + 4.0)]).buffer(0.38, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
+            D.circle(P(13.3, bm), 0.25, 'A-FURN', edge=color, lw=0.07)
         elif k == 'L26':
-            bm, b0, b1 = M.mid(k); D.poly(LineString([P(21.6, bm), P(24.8, bm)]).buffer(0.55, cap_style=1), 'A-FURN', fill='white', edge=color, lw=0.08)
-            for j in range(4):
-                for sgn in (-1, 1): D.circle(P(21.9 + j * 0.85, bm) + tdir(bm) * sgn * 0.85, 0.2, 'A-FURN', edge=color, lw=0.07)
+            bm, b0, b1 = M.mid(k); D.poly(LineString([P(13.25, bm - 7.0), P(13.25, bm + 7.0)]).buffer(0.55, cap_style=1), 'A-FURN', fill='white', edge=color, lw=0.08)
+            for j in range(5):
+                for rr in (12.4, 14.1): D.circle(P(rr, bm - 6.0 + j * 3.0), 0.2, 'A-FURN', edge=color, lw=0.07)
         elif k == 'L21':
             F = Arc(r, 'in'); counter(D, F, -0.9, 0.9, 0.6, 1.15, color); D.text(F.W(0, 1.55), 'COUNTER', 'A-FIXT', size=1.1, color=color)
         elif k == 'M01':
             bm, b0, b1 = M.mid(k)
-            for rr, bb in ((20.0, bm - 2), (20.0, bm + 2.5), (23.3, bm)):
-                D.poly(Point(P(rr, bb)).buffer(0.55, 4), 'A-FURN', fill=PALE, edge=color, lw=0.08)
-            D.text(P(21.6, bm + 0.2), 'DISPLAY PLINTHS', 'A-FURN', size=1.1, color=color)
+            for bb in np.linspace(b0 + 6, b1 - 6, 5):
+                D.poly(Point(P(13.4, bb)).buffer(0.55, 4), 'A-FURN', fill=PALE, edge=color, lw=0.08)
+            D.poly(LS.ann_sec(M.R_IR1 - 0.55, M.R_IR1 - 0.1, b0 + 1.5, b1 - 1.5).intersection(r['poly']), 'A-FURN', fill=PALE, edge=color, lw=0.08)
+            D.text(P(12.2, bm + 3.0), 'DISPLAY PLINTHS + WALL CASES', 'A-FURN', size=1.1, color=color)
         elif k in ('M10', 'M12'):
             # saf lines perpendicular to the qibla direction; qibla arrow
             g = r['poly']; qd = d(QIBLA); pq = np.array([-qd[1], qd[0]])
@@ -339,7 +334,7 @@ def fit(D, fl, color=INK):
             D.text(F.W((r0 + r1) / 2, 1.25), 'WUDHU TAPS', 'A-FIXT', size=1.1, color=color)
         elif k == 'M14':
             bm, b0, b1 = M.mid(k)
-            for bb in (bm - 3, bm + 3): D.poly(LineString([P(19.0, bb), P(24.5, bb)]).buffer(0.25, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
+            for bb in (bm - 8, bm, bm + 8): D.poly(LineString([P(14.6, bb - 3.0), P(14.6, bb + 3.0)]).buffer(0.25, cap_style=2), 'A-FURN', fill='white', edge=color, lw=0.08)
         elif k == 'G10':
             bm, b0, b1 = M.mid(k); D.poly(LineString([P(19.6, bm), P(22.3, bm)]).buffer(1.1, cap_style=2), 'A-FIXT', edge=color, lw=0.08, ls='--')
 
@@ -382,76 +377,90 @@ def landscape_overlay(D, fl, color=None):
 
 # ------------------------------------------------------------------------------------------------ stairs + lifts
 def draw_core(D, c, fl, color=INK, show_text=True):
-    bc, sw, W = c['bc'], c['sw'], c['W']
-    f = lambda u, v: frame(bc, u, v)
-    v0, v1 = c['v_s0'], c['v_s1']; ta, tb = v0 + sw, v1 - sw
-    top = (fl == 'L1' and not c['to_l2']) or fl == 'L2'
-    bottom = fl == 'GF'
-    for side, sgn in (('A', -1), ('B', 1)):
-        u_in, u_out = sgn * 0.1, sgn * (W / 2)
-        solid = (side == 'A' and not top) or (side == 'B' and not bottom)
-        for i in range(13):
-            v = ta + i * M.GO
-            D.line([f(u_in, v), f(u_out, v)], 'A-STRS', lw=0.09, color=color, ls='-' if solid else '--')
-        D.line([f(u_in, ta), f(u_in, tb)], 'A-STRS', lw=0.13, color=color)
-    D.line([f(-0.1, v0 + 0.05), f(-0.1, tb)], 'A-STRS', lw=0.13, color=color); D.line([f(0.1, v0 + 0.05), f(0.1, tb)], 'A-STRS', lw=0.13, color=color)
-    # arrows
-    def arrow(u, va, vb, lab):
-        D.line([f(u, va), f(u, vb)], 'A-STRS', lw=0.13, color=color)
-        tip = f(u, vb); bk = f(u, vb + (0.35 if vb < va else -0.35))
-        sd = tdir(bc) * 0.15
-        D.line([bk + sd, tip, bk - sd], 'A-STRS', lw=0.13, color=color)
-        if show_text: D.text(f(u, va + (0.45 if va < vb else -0.45)), lab, 'A-STRS', size=1.4, color=color, weight='bold')
-    if not top: arrow(-W / 4 - 0.05, tb + 0.3, ta + 0.2, 'UP')
-    if not bottom: arrow(W / 4 + 0.05, tb + 0.3, ta + 0.2, 'DN')
-    if c['key'] == 'S3':                                  # open stair: balustrades instead of walls
-        for u in (-W / 2, W / 2): D.line([f(u, v0), f(u, v1)], 'A-STRS', lw=0.25, color=color)
-        D.line([f(-W / 2, v0), f(W / 2, v0)], 'A-STRS', lw=0.25, color=color)
+    """tangential core: flight A (court side) rises +u from the floor landing, flight B (outer side) returns -u"""
+    f = c['f']
+    if c['stair'] is not None:
+        sw, vi, vo = c['sw'], c['vi'], c['vo']
+        top = (fl == 'L1' and not c['to_l2']) or fl == 'L2'
+        bottom = fl == 'GF'
+        run = M.core_runs(c)[0 if fl == 'GF' else min(1, len(M.core_runs(c)) - 1)]
+        uA0, uA1 = c['ua0'], c['ua0'] + 12 * M.GO
+        for vlo, vhi, solid in ((vi, vi + sw, not top), (vo - sw, vo, not bottom)):
+            for i in range(13):
+                u = uA0 + i * M.GO
+                D.line([f(u, vlo), f(u, vhi)], 'A-STRS', lw=0.09, color=color, ls='-' if solid else '--')
+        D.line([f(uA0, vi + sw), f(uA1, vi + sw)], 'A-STRS', lw=0.13, color=color); D.line([f(uA0, vo - sw), f(uA1, vo - sw)], 'A-STRS', lw=0.13, color=color)
+        vm = vi + sw + 0.1
+        def arrow(v, ua, ub, lab):
+            D.line([f(ua, v), f(ub, v)], 'A-STRS', lw=0.13, color=color)
+            tip = f(ub, v); bk = f(ub - 0.35 * np.sign(ub - ua), v); sd = d(c['bc']) * 0.15
+            D.line([bk + sd, tip, bk - sd], 'A-STRS', lw=0.13, color=color)
+            if show_text: D.text(f(ua - 0.45 * np.sign(ub - ua), v), lab, 'A-STRS', size=1.4, color=color, weight='bold')
+        if not top: arrow(vi + sw / 2, uA0 + 0.3, uA1 - 0.2, 'UP')
+        if not bottom: arrow(vo - sw / 2, uA1 - 0.3, uA0 + 0.2, 'DN')
+        if show_text:
+            um = (c['us0'] + c['us1']) / 2
+            D.text(f(um, vm - 0.05), c['name'], 'A-ANNO', size=1.6, weight='bold', color=color, halo=True)
+            D.text(f(c['us0'] + LAND0_ / 2, vi + 1.0), f"{int(round(sw * 1000))} · {int(round(sw * 1000)) // 550} UNITS", 'A-ANNO', size=1.2, color=color, halo=True)
     if c['lift']:
-        a = [f(-0.8, c['v_l0'] + 0.35), f(0.8, c['v_l0'] + 0.35), f(0.8, c['v_l0'] + 1.75), f(-0.8, c['v_l0'] + 1.75)]
+        lu0, lu1, lv0 = c['lu0'], c['lu1'], c['lv0']
+        a = [f(lu0 + 0.25, lv0 + 0.4), f(lu1 - 0.25, lv0 + 0.4), f(lu1 - 0.25, lv0 + 1.8), f(lu0 + 0.25, lv0 + 1.8)]
         D.poly(Polygon(a), 'A-FIXT', edge=color, lw=0.13); D.line([a[0], a[2]], 'A-FIXT', lw=0.08, color=color); D.line([a[1], a[3]], 'A-FIXT', lw=0.08, color=color)
-    if show_text:
-        D.text(f(0, (v0 + v1) / 2 + 0.2), c['name'], 'A-ANNO', size=1.8, weight='bold', color=color, rot=0, halo=True)
-        D.text(f(0, (v0 + v1) / 2 - 0.45), f"{int(round(sw * 1000))} CLEAR · {int(round(sw * 1000)) // 550} UNITS", 'A-ANNO', size=1.3, color=color, halo=True)
-        if c['lift']: D.text(f(0, c['v_l0'] - 0.75), 'LIFT 13P', 'A-ANNO', size=1.3, color=color, halo=True)
+        if c['riser'] is not None:
+            D.text(c['riser'].centroid.coords[0], 'RISER', 'A-ANNO', size=1.0, color=color)
+        if show_text: D.text(f((lu0 + lu1) / 2, lv0 - 0.8), 'LIFT 13P' if c['stair'] is not None else c['name'] + '\nLIFT 13P', 'A-ANNO', size=1.3, color=color, halo=True)
+LAND0_ = M.LAND0
 
-def draw_s4(D, fl, color=INK):
-    f = lambda u, v: frame(S4['bc'], u, v); w = S4['w']; v0 = S4['v0']
-    runs = [(v0, v0 + S4['run']), (v0 + S4['run'] + S4['land'], S4['v1'])]
-    show = runs[:1] if fl == 'L1' else runs
-    for a, b in show:
-        for i in range(13): D.line([f(-w / 2, a + i * M.GO), f(w / 2, a + i * M.GO)], 'A-STRS', lw=0.09, color=color)
-    for u in (-w / 2, w / 2): D.line([f(u, v0), f(u, S4['v1'] if fl == 'GF' else v0 + S4['run'])], 'A-STRS', lw=0.25, color=color)
-    D.text(f(0, v0 + S4['run'] / 2), 'STAIR 4\n(EXTERNAL)\n2200 · 4 UNITS', 'A-ANNO', size=1.4, color=color, halo=True, rot=0)
+def draw_ext(D, s, fl, color=INK):
+    """external open stair (S4 radial, S5 wrapping the drum): treads, landings, balustrades, label"""
+    f = s['f']; w = s['w']
+    parts = s['parts']
+    if fl == 'L1':                                    # only the upper half is seen in the first-floor plan cut
+        zcut = s['z_top'] - 1.2
+        parts = [p for p in parts if p[3] >= zcut]
+    for kind, u0, u1, z in parts:
+        if kind == 'land': D.poly(Polygon([f(u0, -w / 2), f(u1, -w / 2), f(u1, w / 2), f(u0, w / 2)]), 'A-STRS', fill='#F4F5F6', edge=color, lw=0.09)
+        else: D.line([f(u0, -w / 2), f(u0, w / 2)], 'A-STRS', lw=0.09, color=color)
+    umax = max(p[2] for p in parts)
+    for v in (-w / 2, w / 2): D.line([f(0, v), f(umax, v)], 'A-STRS', lw=0.25, color=color)
+    if fl == 'L1':
+        D.line([f(umax, -w / 2), f(umax, w / 2)], 'A-STRS', lw=0.13, color=color, ls='--')
+    if s['kind'] == 'tangential':                     # link through the fin screen from the fin walk to the top landing
+        q0 = P(R_L1 - 0.1, M.brg(s['top'])); D.poly(LineString([q0, s['top']]).buffer(1.1, cap_style=2), 'A-STRS', fill='#F4F5F6', edge=color, lw=0.09)
+    um = s['L'] / 2 if fl == 'GF' else min(umax, s['L'] / 2) / 2 + 1.0
+    nr = sum(n for k, n in s['seq'] if k == 'flight')
+    D.text(f(um, 0), f"{s['name']} (EXTERNAL)\n{int(round(w * 1000))} · {int(round(w * 1000)) // 550} UNITS\n{nr} R x {int(round(s['h'] * 1000))}", 'A-ANNO', size=1.3, color=color, halo=True)
     lab = 'DN' if fl == 'L1' else 'UP'
-    D.text(f(0, v0 + 0.5 if fl == 'L1' else S4['v1'] - 0.5), lab, 'A-STRS', size=1.4, weight='bold', color=color)
+    D.text(f(0.6 if fl == 'L1' else s['L'] - 0.6, 0), lab, 'A-STRS', size=1.4, weight='bold', color=color)
+def draw_s4(D, fl, color=INK):
+    for s in EXT.values(): draw_ext(D, s, fl, color)
 
 # ------------------------------------------------------------------------------------------------ grid + dims
+RING_GRID = [('A', M.R_IR0), ('B', RG.R_B), ('C', RG.R_E), ('D', RG.R_M), ('E', R_GF), ('F', R_L1)]
 def grid(D, fl, color='#7A8590'):
     for lab, b, p in M.GRID:
         D.line([P(7.5, b), P(29.6, b)], 'A-GRID', lw=0.07, color=color, ls='-.')
         c = P(30.6, b); D.circle(c, 0.42, 'A-GRID', fill='white', edge=color, lw=0.13, z=7); D.text(c, lab, 'A-GRID', size=1.6, color=color, z=8)
-    for lab, r in (('A', R_BR0), ('B', R_BR1), ('C', R_GF), ('D', R_L1)):
+    for i, (lab, r) in enumerate(RING_GRID):
         D.arc(C, r, 0, 360, 'A-GRID', lw=0.07, color=color, ls='-.')
-        c = P(r, 254.0) if False else P(r, 248.5)
+        c = P(r, 248.5 if i % 2 == 0 else 251.0)
         D.circle(c, 0.42, 'A-GRID', fill='white', edge=color, lw=0.13, z=7); D.text(c, lab, 'A-GRID', size=1.6, color=color, z=8)
 
 def radial_dims(D, b=242.8, color='#2C6E7A'):
-    stops = [0, R_POOL, R_COURT, R_BR0, R_BR1, R_GF, R_L1, M.R_ROOF]
+    stops = [0, R_POOL, R_COURT, R_BR0, RG.R_GAL, RG.R_IR1, RG.R_BG0, RG.R_BG1, RG.R_OR0, R_L1, M.R_ROOF]
     off = tdir(b) * 1.6
     for r in stops: D.line([P(r, b) + off * 0.6, P(r, b) + off * 1.4], 'A-DIMS', lw=0.09, color=color)
     D.line([P(0, b) + off, P(stops[-1], b) + off], 'A-DIMS', lw=0.09, color=color)
     for a, c in zip(stops[:-1], stops[1:]):
-        D.text(P((a + c) / 2, b) + off * 1.45, f'{int(round((c - a) * 1000))}', 'A-DIMS', size=1.4, color=color, rot=(90 - b) % 180 - 0, halo=True)
+        D.text(P((a + c) / 2, b) + off * 1.45, f'{int(round((c - a) * 1000))}', 'A-DIMS', size=1.25 if c - a < 2 else 1.4, color=color, rot=(90 - b) % 180 - 0, halo=True)
     D.text(P(stops[-1] + 2.2, b) + off, 'RADII FROM\nTHE CENTRE', 'A-DIMS', size=1.3, color=color)
 
 # ------------------------------------------------------------------------------------------------ tags
-TAG_AT = dict(G01=14.3, G02=14.3, L04=14.3, L05=14.3, G06=21.4, G07=21.4, G10=16.0, G11=17.2, G08=19.6)
+TAG_AT = dict(G01=14.3, G02=14.3, L04=12.6, L05=12.6, G06=21.4, G07=21.4, G10=19.5, G11=19.0, G08=20.8, G09=17.6, G23=19.5, L12=23.4)
 def room_tags(D, fl, color=INK, area=True, scale=1.0):
     for r in rooms(fl) + [r for r in ROOMS if r['fl'] == fl and r['kind'] == 'open']:
         g = r['poly']; a = g.buffer(-0.075, join_style=2).area
         p = polylabel(g, 0.05); p = (p.x, p.y)
-        if r['key'] in ('L24', 'L25', 'L26', 'L27', 'L23'): p = tuple(P(24.6 if r['key'] != 'L25' else 24.8, M.mid(r['key'])[0]))
         if r['key'] in TAG_AT: p = tuple(P(TAG_AT[r['key']], M.mid(r['key'])[0]))
         nm = r['name']; small = a < 14
         words = nm.replace(' · ', '\n').split('\n')
@@ -490,6 +499,19 @@ def section_marks(D, color=INK):
             D.poly(Polygon([q + nrm * 0.7, q + nrm * 1.8, q + nrm * 0.7 + dirn * 0.6 * sg]), 'A-ANNO', fill=color, edge=None, z=8)
 
 # ------------------------------------------------------------------------------------------------ the plan
+def hatch_lines(D, poly, layer, color, step=0.9, angle=60, lw=0.05):
+    a = math.radians(angle); t = np.array([math.cos(a), math.sin(a)]); n = np.array([-t[1], t[0]])
+    c = np.array(poly.centroid.coords[0]); R = math.hypot(poly.bounds[2] - poly.bounds[0], poly.bounds[3] - poly.bounds[1])
+    for k in np.arange(-R, R, step):
+        ln = LineString([c + n * k - t * R, c + n * k + t * R]).intersection(poly)
+        for q in getattr(ln, 'geoms', [ln]):
+            if q.geom_type == 'LineString' and q.length > 0.05: D.line(list(q.coords), layer, lw=lw, color=color, z=0.7)
+
+def gap_glass():
+    """the parts of the two gaps that lie over ground-floor rooms: walk-on opal glass rooflights at +5.400"""
+    cores = unary_union([c['fp'] for c in CORES.values()])
+    return M.GAPS.intersection(SC.GF.buffer(0.3)).difference(cores.buffer(0.05)).buffer(0)
+
 def plan_drawing(fl, mode='arch'):
     D = Drawing(f'PLAN {fl} {mode}')
     base = mode != 'arch'
@@ -505,24 +527,52 @@ def plan_drawing(fl, mode='arch'):
         D.arc(C, R_BR0, 0, 360, 'A-SLAB', lw=0.13, color=ink, ls='--')
         D.arc(C, R_L1, 0, 360, 'A-SLAB', lw=0.13, color=ink, ls='--')
         D.text(P(R_L1 + 0.35, 75), 'LINE OF FLOOR ABOVE', 'A-ANNO', size=1.2, color=ink, rot=-75 + 90 - 90, ha='left')
+        # the ring bridge and the gaps above, dashed: the gaps are rooflights over the rooms, open over the gates
+        for r_ in (M.R_IR1, M.R_BG0, M.R_BG1, M.R_OR0): D.arc(C, r_, 0, 360, 'A-HIDN', lw=0.07, color=LGREY, ls='--')
+        D.poly(gap_glass(), 'A-HIDN', fill=None, edge='#7FB3CF' if not base else LGREY, lw=0.07, ls=':', z=1)
+        D.text(P((M.R_BG0 + M.R_BG1) / 2, 196.5), 'LINE OF RING BRIDGE ABOVE', 'A-ANNO', size=1.1, color=ink, halo=True)
+        D.text(P((M.R_BG1 + M.R_OR0) / 2 + 0.1, 287.0), 'ROOFLIGHT OVER', 'A-ANNO', size=1.0, color='#4F86A6' if not base else ink, halo=True)
     else:
         g = M.PLATE[fl]
+        wk = '#F3F4F5' if not base else None
         D.poly(g, 'A-SLAB', fill=None, edge=ink, lw=0.25, z=1)
-        D.poly(SC.ann(R_BR0, R_BR1), 'A-SLAB', fill='#F6F7F8' if not base else None, edge=ink, lw=0.25, z=1)
-        D.circle(C, R_BR0 - 0.1, 'A-SLAB', edge=ink, lw=0.13, z=1)          # balustrade
-        D.text(P(11.0, 168), 'RING BRIDGE  3000', 'A-ANNO', size=1.4, color=ink, rot=-(168 - 90), halo=True)
+        D.poly(g.buffer(-0.06), 'A-SLAB', fill=None, edge=ink, lw=0.07, z=1)                          # glass balustrade on every free edge
+        D.poly(M.WALK, 'A-SLAB', fill=wk, edge=None, z=0.5)
         D.circle(C, R_COURT, 'A-SITE', edge=LGREY, lw=0.09, ls='--', z=1); D.text(C, 'OPEN TO\nTALAM COURT\nBELOW', 'A-ANNO', size=1.6, color=ink)
         D.circle(C, 0.3, 'A-COLS', fill=ink, edge=None, z=4)
-        for o in M.OPEN:
-            if o['fl'] == fl and o['poly'].area > 20:
-                p = polylabel(o['poly'], 0.1)
-                D.text((p.x, p.y), 'OPEN DECK\n(ROOFED)', 'A-AREA', size=1.6, color='#5B7F4E' if not base else ink, halo=True)
-        D.poly(M.PLATE[fl].difference(SC.disc(R_L1 - 0.4)), 'A-SLAB', edge=None, fill=None)
+        D.text(P((M.R_IR0 + M.R_GAL) / 2, 168), 'GALLERY WALK  1500', 'A-ANNO', size=1.3, color=ink, rot=-(168 - 90), halo=True)
+        if fl == 'L1':
+            D.poly(M.BRIDGE.union(M.WALKWAYS), 'A-SLAB', fill=wk, edge=None, z=0.5)
+            gg = gap_glass(); D.poly(gg, 'A-SLAB', fill='#E3F0F7' if not base else None, edge='#7FB3CF' if not base else LGREY, lw=0.07, z=0.6)
+            for q in getattr(gg, 'geoms', [gg]):
+                if q.area > 1.0: hatch_lines(D, q, 'A-SLAB', '#9CC4DA' if not base else LGREY, step=0.9, angle=60, lw=0.05)
+            for bb in (150.0, 255.0):
+                D.text(P((M.R_BG0 + M.R_BG1) / 2, bb), 'RING BRIDGE  3000 · FREE-STANDING', 'A-ANNO', size=1.3, color=ink, rot=-(bb - 90), halo=True)
+            D.text(P((M.R_IR1 + M.R_BG0) / 2, 210.0), 'GAP', 'A-ANNO', size=1.1, color='#4F86A6' if not base else ink, halo=True)
+            D.text(P((M.R_BG1 + M.R_OR0) / 2, 210.0), 'GAP', 'A-ANNO', size=1.1, color='#4F86A6' if not base else ink, halo=True)
+            D.text(P((M.R_BG1 + M.R_OR0) / 2, 300.0), 'OPAL GLASS ROOFLIGHT\n(MAINTENANCE ONLY)', 'A-ANNO', size=1.0, color='#4F86A6' if not base else ink, halo=True)
+            for sp in SC.SPINES:
+                D.text(P((M.R_IR1 + M.R_OR0) / 2, sp['b']) + tdir(sp['b']) * 2.4, 'WALKWAY\n3000', 'A-ANNO', size=1.1, color=ink, halo=True)
+                D.text(P((M.R_IR1 + M.R_BG0) / 2, sp['b']) - tdir(sp['b']) * 2.6, 'OPEN TO\nGATE', 'A-ANNO', size=0.95, color='#4F86A6' if not base else ink, halo=True)
+            D.text(P((M.R_OS + M.R_OR1) / 2, 70.0), 'FIN WALK', 'A-ANNO', size=1.1, color=ink, rot=-(70 - 90), halo=True)
+            for q in M.decks(fl):
+                if q.area > 22:
+                    p = polylabel(q, 0.1)
+                    lab = 'COURT BALCONY' if M.rad((p.x, p.y)) < M.R_IR1 else 'OPEN DECK\n(ROOFED)'
+                    D.text((p.x, p.y), f'{lab}\n{q.area:.0f} m²', 'A-AREA', size=1.4, color='#5B7F4E' if not base else ink, halo=True)
+        else:
+            for g_ in (M.BRIDGE.union(M.WALKWAYS), M.OUTER):
+                D.poly(g_, 'A-HIDN', fill=None, edge=LGREY, lw=0.09, ls='--', z=0.5)
+            D.text(P((M.R_BG0 + M.R_BG1) / 2, 150.0), 'RING BRIDGE BELOW (+5.400)', 'A-ANNO', size=1.2, color=GREY, rot=-(150 - 90), halo=True)
+            D.text(P((M.R_OR0 + M.R_OR1) / 2, 150.0), 'OUTER RING ROOF BELOW', 'A-ANNO', size=1.2, color=GREY, rot=-(150 - 90), halo=True)
+            for q in M.decks(fl):
+                if q.area > 8:
+                    p = polylabel(q, 0.1); D.text((p.x, p.y), f'LOUNGE\n{q.area:.0f} m²', 'A-AREA', size=1.3, color='#5B7F4E' if not base else ink, halo=True)
     grid(D, fl, color='#B9C0C7' if base else '#7A8590')
-    # columns
+    # columns: GF all rings; L1 the inner rings, ring E and the bridge posts; L2 the inner rings
+    show = dict(GF=('B', 'C', 'D', 'E'), L1=('B', 'C', 'E', 'P'), L2=('B', 'C'))[fl]
     for c in M.COLS:
-        if fl != 'GF' and c['ring'] == 'C' and False: continue
-        D.circle(c['p'], 0.175 if c['ring'] != 'A' else 0.2, 'A-COLS', fill=wfill, edge=None, z=6)
+        if c['ring'] in show: D.circle(c['p'], c['r'], 'A-COLS', fill=wfill, edge=None, z=6)
     # walls + glazing + doors
     W = walls(fl); dl = door_list(fl)
     cut = unary_union([LineString([q['p'] - q['t'] * q['w'] / 2, q['p'] + q['t'] * q['w'] / 2]).buffer(0.32, cap_style=2) for q in dl]) if dl else Polygon()
@@ -541,7 +591,7 @@ def plan_drawing(fl, mode='arch'):
     if fl == 'GF': court_fit(D, ink if not base else '#B5BCC4')
     if fl in ('GF', 'L1'): landscape_overlay(D, fl, None if not base else '#B5BCC4')
     room_tags(D, fl, color=ink)
-    level_tag(D, P(R_COURT - 1.5, 160) if fl == 'GF' else P(R_BR1 + 1.4, 300 if fl != 'L2' else 122), f'FFL +{FFL[fl]:.3f}', color=ink)
+    level_tag(D, P(R_COURT - 1.5, 160) if fl == 'GF' else P(10.2, 240 if fl != 'L2' else 214), f'FFL +{FFL[fl]:.3f}', color=ink)
     if not base:
         radial_dims(D)
         section_marks(D)

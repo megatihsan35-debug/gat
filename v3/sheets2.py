@@ -5,7 +5,8 @@ import numpy as np
 from shapely.geometry import Polygon, Point, LineString, box
 from shapely.ops import unary_union
 import plan3 as M
-from plan3 import C, P, d, tdir, SC, ROOMS, FFL, CORES, S4
+from plan3 import C, P, d, tdir, SC, ROOMS, FFL, CORES, S4, EXT
+import rings as RG
 from cad import Drawing, INK
 import sheets as SH
 from sheets import new_sheet, notes_block, legend_block, north, scale_bar, drawing_title, key_plan, wrap, ACCENT
@@ -53,13 +54,13 @@ def site_sheet(no='A-001'):
     rows = [('SITE AREA (LOT 10150 + TENNIS COURT)', f'{SC.SITE.area:,.1f} M²'), ('BUILDING FOOTPRINT (ROOF EDGE Ø56.6)', f'{cover:,.0f} M²'),
             ('SITE COVERAGE', f'{cover / SC.SITE.area * 100:.0f} %'), ('ENCLOSED FLOOR AREA (GROSS, 3 FLOORS)', f'{gfa_enc:,.0f} M²'),
             ('ROOFED OPEN DECKS + ARCADE', f'{sum(o["poly"].area for o in M.OPEN):,.0f} M²'), ('PLOT RATIO (ENCLOSED / SITE)', f'1 : {SC.SITE.area / gfa_enc:.1f}'),
-            ('HEIGHT: ROOF / MAST', '+16.200 / +30.000'), ('STAFF PARKING (BRIEF 5)', f'{sum(1 for k, _ in ST.PARK if k == "S")}'),
+            ('HEIGHT: OUTER / MIDDLE / FUNNEL RIM / MAST', '+16.2 / +18.0 / +19.8 / +30.0'), ('STAFF PARKING (BRIEF 5)', f'{sum(1 for k, _ in ST.PARK if k == "S")}'),
             ('OKU PARKING (BRIEF 1)', f'{sum(1 for k, _ in ST.PARK if k == "OKU")}'), ('MOTORCYCLE (BRIEF 10)', f'{len(ST.MOTOR)}'), ('BICYCLE (BRIEF 10)', f'{len(ST.BIKES)}')]
     yy = table(side, 850, 735, [('SITE DATA', 120, 'left'), ('', 45, 'right')], rows, title='SITE DATA', k=1.0)
     hs = (ST.HS_E.area + ST.HS_S.area) / 6.0
     rows = [('FIRE APPLIANCE ACCESS (BY-LAW 140)', f'{hs:.0f} M OF 6 M HARDSTANDING'), ('FACADE SERVED / PERIMETER', f'{hs / (2 * math.pi * M.R_L1) * 100:.0f} % OF {2 * math.pi * M.R_L1:.0f} M'),
             ('HYDRANT H1 TO HARDSTANDING S', f'{Point(ST.HYDRANTS[0][0]).distance(ST.HS_S):.0f} M (≤ 30)'), ('HYDRANT H2 TO HARDSTANDING E', f'{Point(ST.HYDRANTS[1][0]).distance(ST.HS_E):.0f} M (≤ 30)'),
-            ('ROOF CATCHMENT (PETALS + FUNNEL)', f'{rc["A_roof"]:,.0f} + {rc["A_fun"]:,.0f} M²'), ('DESIGN STORM (TO MSMA 2ND ED.)', f'{ST.I_RAIN:.0f} MM/H'),
+            ('ROOF CATCHMENT (OUTER + MIDDLE TIERS, FUNNEL)', f'{rc["A_roof"]:,.0f} + {rc["A_fun"]:,.0f} M²'), ('DESIGN STORM (TO MSMA 2ND ED.)', f'{ST.I_RAIN:.0f} MM/H'),
             ('PEAK RUN-OFF, ROOF', f'{rc["Q_roof"] + rc["Q_fun"]:.0f} L/S'), ('ON-SITE DETENTION (OSD)', 'SIZED BY C&S TO MSMA')]
     yy = table(side, 850, yy - 2, [('ACCESS + DRAINAGE', 105, 'left'), ('', 60, 'right')], rows, title='BOMBA ACCESS + DRAINAGE', k=1.0)
     drawing_title(side, (40, 40), '1', title, 200, 'SITE DATUM ±0.000 = ROAD CROWN (ASSUMED, TO SURVEY)')
@@ -68,7 +69,8 @@ def site_sheet(no='A-001'):
               ('line', dict(lw=0.4, color=ST.BROWN), 'SEWER (uPVC Ø150) + IC / MH'), ('line', dict(lw=0.4, color=ST.CYAN), 'STORMWATER DRAIN'),
               ('line', dict(lw=0.4, color=ST.BLUE), 'WATER (HDPE)'), ('line', dict(lw=0.4, color=ST.RED, ls='--'), 'HOSE REEL MAIN'), ('line', dict(lw=0.4, color=ST.MAG, ls=':'), 'LV CABLE IN DUCT')]
     notes = ['ROAD NAMES AND LEVELS TO BE CONFIRMED BY THE TOPOGRAPHIC SURVEY. THE FORMER TENNIS COURT IS DEMOLISHED AND ADDED TO THE SITE.',
-             'FORECOURTS RISE FROM ±0.000 AT THE ROAD TO +0.900 AT THE RING BRIDGE LINE AT 1:20 OR FLATTER (MS 1184), WITH LANDINGS.',
+             'FORECOURTS RISE FROM ±0.000 AT THE ROAD TO +0.900 AT THE COURT EDGE AT 1:20 OR FLATTER (MS 1184), WITH LANDINGS.',
+             'STAIR 5 WRAPS THE DRUM ON THE SOUTH-EAST PROMENADE; ITS LOW END IS FENCED BY A PLANTER (NO WALKING UNDER < 2.1 M).',
              'THE SOUTH HARDSTANDING IS PAVED FOR 30 T AND KEPT CLEAR BY REMOVABLE BOLLARDS; THE EAST ONE DOUBLES AS THE SERVICE YARD.']
     finish(S, F, side, no, title, '1:200', legend, notes, y, x0)
     return S, [(D, (0, 0))]
@@ -82,17 +84,18 @@ def roof_sheet(no='A-103'):
     side = Drawing('side', paper=True)
     north(side, (1000, 790)); scale_bar(side, (850, 760), 100)
     rc = ST.rain_calc()
-    rows = [('PETAL ROOF CATCHMENT', f'{rc["A_roof"]:,.0f} M²'), ('FUNNEL ROOF CATCHMENT', f'{rc["A_fun"]:,.0f} M²'), ('DESIGN INTENSITY i', f'{ST.I_RAIN:.0f} MM/H'),
-            ('Q = C·i·A / 3600 (C = 1.0), PETALS', f'{rc["Q_roof"]:.0f} L/S'), ('DOWNPIPES Ø150 (PERIMETER + VALLEY)', f'{rc["n"]} NOS.'),
+    rows = [('OUTER TIER (+ GLAZED SLOTS)', f'{rc["A_out"]:,.0f} M²'), ('MIDDLE TIER (SPILLS ONTO THE OUTER TIER)', f'{rc["A_mid"]:,.0f} M²'), ('FUNNEL CATCHMENT', f'{rc["A_fun"]:,.0f} M²'), ('DESIGN INTENSITY i', f'{ST.I_RAIN:.0f} MM/H'),
+            ('Q = C·i·A / 3600 (C = 1.0), OUTER + MIDDLE', f'{rc["Q_roof"]:.0f} L/S'), ('DOWNPIPES Ø150 (PERIMETER + VALLEY)', f'{rc["n"]} NOS.'),
             ('FLOW PER DOWNPIPE', f'{rc["per"]:.1f} L/S ≤ 9 L/S'), ('FUNNEL → OCULUS → POOL', f'{rc["Q_fun"]:.0f} L/S'), ('POOL OVERFLOW 2 x Ø150 @ 1:50', 'TO PERIMETER DRAIN')]
     yy = table(side, 850, 735, [('RAINWATER', 110, 'left'), ('', 55, 'right')], rows, title='ROOF DRAINAGE CHECK', k=1.0)
-    roof_spec = ['PETAL ROOFS: 0.9 MM ALUMINIUM STANDING SEAM (PVDF, SILVER-WHITE) ON 100 MM ROCKWOOL + BREATHER MEMBRANE ON STEEL PURLINS ON TAPERED RADIAL STEEL RAFTERS.',
-                 'SEAMS RUN ALONG THE FALL (ROUND THE RING) TO THE VALLEYS AT THE TIMUR AND TENGAH GATES; 3° RADIAL CROSS FALL TO THE CONCEALED PERIMETER GUTTER.',
-                 'FUNNEL ROOF: GRC-CLAD STEEL CONE FALLING 2.1 M TO THE Ø3 M OCULUS; RAIN DROPS 10.7 M INTO THE TITIK POOL (THE "TITIK" MOMENT).',
+    roof_spec = ['THREE TIERS, EACH 1.8 M ABOVE THE ONE OUTSIDE IT, ALL FOLLOWING THE WAVE (HIGH AT SELATAN + UTARA, LOW AT TENGAH + TIMUR). THE TIERS OVERLAP 600-700 IN PLAN; THE OPENINGS BETWEEN THEM ARE CLERESTORIES (DETAIL 9).',
+                 'OUTER + MIDDLE TIERS: 0.9 MM ALUMINIUM STANDING SEAM (PVDF, SILVER-WHITE) ON 100 MM ROCKWOOL + BREATHER MEMBRANE ON STEEL PURLINS ON TAPERED RADIAL RAFTERS.',
+                 'SEAMS RUN ALONG THE FALL (ROUND THE RING) TO THE VALLEYS AT THE TIMUR AND TENGAH GATES; THE MIDDLE TIER FALLS 1:50 OUTWARD AND SPILLS THROUGH SS SPOUTS ONTO THE OUTER TIER.',
+                 'FUNNEL ROOF: GRC-CLAD STEEL CONE, RIM 3.6 M ABOVE THE OUTER TIER, FALLING TO THE Ø3 M OCULUS; RAIN DROPS INTO THE TITIK POOL (THE "TITIK" MOMENT).',
                  'GUTTERS: 1.6 MM STAINLESS STEEL 316 BOX GUTTERS, 400 WIDE, WITH SUMP OUTLETS + OVERFLOW WEIRS AT EVERY DOWNPIPE.',
                  'DOWNPIPES RUN INSIDE A FIN-PROFILE CASING ON THE FACADE LINE (SEE A-500 DETAIL 2) TO THE PERIMETER DRAIN.']
     yy = notes_block(side, 850, yy - 2, 'ROOF SPECIFICATION', roof_spec, width=60)
-    drawing_title(side, (40, 40), '1', title, 100, 'SPOT LEVELS = TOP OF ROOF AT THE EDGE')
+    drawing_title(side, (40, 40), '1', title, 100, 'SPOT LEVELS = TOP OF EACH TIER (OUTER AT R26.6, MIDDLE AT R18.5, FUNNEL RIM AT R14.6)')
     legend = [('line', dict(lw=0.4, color=ST.CYAN), 'GUTTER / RAINWATER'), ('circle', dict(edge=ST.CYAN, r=1.0), 'RWDP Ø150'), ('line', dict(lw=0.3), 'FALL ARROW (DOWNHILL)'),
               ('line', dict(lw=0.15, color='#9AA3AD'), 'STANDING SEAM'), ('line', dict(lw=0.2, ls='--', color='#9AA3AD'), 'FIRST FLOOR EDGE BELOW')]
     finish(S, F, side, no, title, '1:100', legend, None, y, x0)
@@ -105,12 +108,15 @@ def sections_sheet(no='A-200'):
     (A, XA), (B, XB) = SE.section_set()
     S.place(A, 100, (0, 0), (60, 480)); S.place(B, 100, (0, 0), (60, 85))
     side = Drawing('side', paper=True)
-    drawing_title(side, (60, 452), 'A', 'SECTION A-A', 100, 'THROUGH THE SELATAN (MAIN) GATE, COURT + UTARA BLOCK · LOOKING WEST · SOUTH ON THE LEFT')
-    drawing_title(side, (60, 57), 'B', 'SECTION B-B', 100, 'THROUGH STAIR 4, THE WEST SHOPS, COURT + EAST HALL · LOOKING NORTH · WEST ON THE LEFT')
+    drawing_title(side, (60, 452), 'A', 'SECTION A-A', 100, 'THROUGH THE SELATAN (MAIN) GATE, THE GAPS, THE RING BRIDGE, COURT + CORE 2 · LOOKING WEST · SOUTH ON THE LEFT')
+    drawing_title(side, (60, 57), 'B', 'SECTION B-B', 100, 'THROUGH STAIR 4, THE WEST SHOPS + MUSOLLA, COURT, CORE 1 + THE HALL · LOOKING NORTH · WEST ON THE LEFT')
     scale_bar(side, (880, 452), 100)
-    finish(S, F, side, no, title, '1:100', None, ['LEVELS IN METRES ABOVE SITE DATUM ±0.000. FLOOR ZONES: 600 (RC SLAB 250 + BEAMS + SERVICES); RING BRIDGE 350.',
+    finish(S, F, side, no, title, '1:100', None, ['LEVELS IN METRES ABOVE SITE DATUM ±0.000. FLOOR ZONES: 600 (RC SLAB 250 + BEAMS + SERVICES); RING BRIDGE, WALKWAYS + GALLERY WALK 350.',
+           'THREE RINGS: INNER RING (GF + L1 + L2) R9.5-15.5 · GAP 1500 · FREE-STANDING RING BRIDGE (L1) R17.0-20.0 · GAP 1500 · OUTER RING (GF + L1) R21.5-26.5. THE BRIDGE TOUCHES THE RINGS ONLY BY THE 4 WALKWAYS ON THE GATE AXES.',
+           'GAPS: OPAL LAMINATED GLASS ROOFLIGHTS AT +5.400 OVER GF ROOMS (MAINTENANCE ACCESS ONLY), OPEN OVER THE GATE PASSAGES; 1100 GLASS BALUSTRADES ON EVERY EDGE.',
+           'ROOF: THREE TIERS STEPPING UP 1.8 M TOWARDS THE CENTRE; CLERESTORIES (LOUVRED GLASS, ≥ 1.3 M CLEAR) WHERE THEY OVERLAP LET DAYLIGHT AND STACK-EFFECT AIR DOWN THE GAPS.',
            'CEILINGS (DASHED): GF +4.200, L1 +8.400, L2 +12.600 OR UNDER THE ROOF WHERE LOWER. CLEAR HEIGHTS: GF 3300, L1 3000-4300, L2 ≥ 2700.',
-           'COLUMNS Ø350 RC ON PAD FOOTINGS (C&S TO DESIGN); ROOF RAFTERS CANTILEVER 5.3 M BEYOND RING C (R23) TO THE ROOF EDGE R28.3.'], y, x0)
+           'COLUMNS Ø350 RC ON PAD FOOTINGS (C&S TO DESIGN) ON RINGS B, C (INNER RING), D (BRIDGE) AND E (OUTER RING); Ø150 STEEL POSTS AT THE BRIDGE EDGES CARRY THE MIDDLE TIER.'], y, x0)
     return S, [(A, (0, 0)), (B, (0, -45))]
 
 def elevations_sheet(no, views):
@@ -139,6 +145,11 @@ def canopy_hs_clear():
             if ST.HS_S.contains(Point(p)): worst = min(worst, LS.z_top(c, s_, t) - (0.4 if abs(t) > 0.95 else LS.rib_depth(c, s_)) - SE.ground_z(p))
     return worst
 
+def dead_end(fl, pt):
+    """one-way part of the route: from the point (through its room door) to the ring it joins, where two directions open up
+    (the inner walk, the bridge and the outer deck / fin walk are all rings with exits both ways)"""
+    return min(leg for n, leg in M._nodes_of(fl, pt))
+
 def fire_strategy_sheet(no='F-000'):
     title = 'FIRE STRATEGY + CALCULATIONS'
     S, F, x0, y = new_sheet(no, title, 'NTS @ A0')
@@ -155,21 +166,22 @@ def fire_strategy_sheet(no='F-000'):
                title='1  OCCUPANT LOAD (UBBL 7TH SCHEDULE FACTORS)', size=1.55, lh=2.65)
     loads = {fl: sum(n for _, _, _, n in byfl[fl]) for fl in byfl}
     U = M.UNITS
-    capL1 = 75 * (U['C1'] + U['C2'] + U['S3'] + U['S4']); capL2 = 75 * (U['C2'] + U['S3'])
-    rows = [('L1 +5.400', 'C1 3 + C2 3 + S3 3 + S4 4 = 13 UNITS', f'{capL1}', f'{loads["L1"]}', 'OK' if capL1 >= loads['L1'] else 'FAIL'),
-            ('L2 +9.600', 'C2 3 + S3 3 = 6 UNITS', f'{capL2}', f'{loads["L2"]}', 'OK' if capL2 >= loads['L2'] else 'FAIL'),
+    capL1 = 75 * (U['C1'] + U['C2'] + U['S4'] + U['S5']); capL2 = 75 * (U['C1'] + U['C2'])
+    rows = [('L1 +5.400', f"C1 {U['C1']} + C2 {U['C2']} + S4 {U['S4']} + S5 {U['S5']} = {U['C1'] + U['C2'] + U['S4'] + U['S5']} UNITS", f'{capL1}', f'{loads["L1"]}', 'OK' if capL1 >= loads['L1'] else 'FAIL'),
+            ('L2 +9.600', f"C1 {U['C1']} + C2 {U['C2']} = {U['C1'] + U['C2']} UNITS", f'{capL2}', f'{loads["L2"]}', 'OK' if capL2 >= loads['L2'] else 'FAIL'),
             ('GF +0.900', 'ALL ROOMS OPEN STRAIGHT TO THE ARCADE / COLONNADE AND 4 OPEN GATES', '—', f'{loads["GF"]}', 'OK')]
     y2 = table(D, 390, 805, [('FLOOR', 20, 'left'), ('STAIRS (UNIT = 550 MM)', 92, 'left'), ('CAPACITY', 22, 'right'), ('LOAD', 18, 'right'), ('', 14, 'right')], rows,
                title='2  EXIT CAPACITY (75 PERSONS / UNIT, ASSEMBLY STAIRS)', size=1.6)
     tv = {}
     for fl in ('L1', 'L2'):
-        pl = M.PLATE[fl]; xs = np.linspace(pl.bounds[0], pl.bounds[2], 70); ys = np.linspace(pl.bounds[1], pl.bounds[3], 70); w1 = de = 0
+        pl = M.PLATE[fl]; xs = np.linspace(pl.bounds[0], pl.bounds[2], 120); ys = np.linspace(pl.bounds[1], pl.bounds[3], 120); w1 = de = 0
         for xx in xs:
             for yy in ys:
-                if not pl.contains(Point(xx, yy)): continue
-                t = M.travel(fl, (xx, yy)); w1 = max(w1, t[0][0]); de = max(de, min(t[0][0], max(0.0, math.hypot(xx - C[0], yy - C[1]) - M.R_BR1)))
+                if not pl.contains(Point(xx, yy)) or any(c['fp'].contains(Point(xx, yy)) for c in CORES.values()): continue
+                t = M.travel(fl, (xx, yy)); w1 = max(w1, t[0][0]); de = max(de, dead_end(fl, (xx, yy)))
         tv[fl] = (w1, de)
     rows = [(fl, f'{tv[fl][0]:.1f}', '45.0', f'{tv[fl][1]:.1f}', '15.0', 'OK' if tv[fl][0] <= 45 and tv[fl][1] <= 15 else 'FAIL') for fl in ('L1', 'L2')]
+    rows.append(('', 'MEASURED ALONG THE RINGS', '', '(BRIDGE + 4 WALKWAYS)', '', ''))
     y2 = table(D, 390, y2 - 2, [('FLOOR', 20, 'left'), ('WORST TRAVEL M', 30, 'right'), ('LIMIT', 18, 'right'), ('WORST DEAD END', 32, 'right'), ('LIMIT', 18, 'right'), ('', 14, 'right')], rows,
                title='3  TRAVEL DISTANCE (UNSPRINKLERED, TWO DIRECTIONS)', size=1.6)
     enc = sum(r['poly'].area for r in ROOMS if r['kind'] not in ('open',)); op = sum(o['poly'].area for o in M.OPEN)
@@ -179,14 +191,14 @@ def fire_strategy_sheet(no='F-000'):
             ('ENCLOSED FLOOR AREA', f'{enc:,.0f} M² → 10TH SCHEDULE BAND 1,001-3,000 M² (SHOP ≥ 2 STOREYS)'),
             ('REQUIRED (10TH SCHEDULE)', 'HOSE REEL (G) + AUTOMATIC DETECTION (1) + MANUAL ALARM (2) — ALL PROVIDED'),
             ('FLAG FOR BOMBA', f'IF THE ROOFED OPEN DECKS ({op:,.0f} M²) ARE COUNTED, TOTAL {enc + op:,.0f} M² > 3,000 M²\n→ SPRINKLERS. PUMP ROOM + TANK BAY SIZED TO TAKE THEM.'),
-            ('HOSE REELS', f'{nhr} NOS. (GF 3, L1 3, L2 3) Ø25 x 30 M, EVERY POINT WITHIN 30 M + 6 M THROW'),
+            ('HOSE REELS', f"{nhr} NOS. (GF {len(SV.hr_points('GF'))}, L1 {len(SV.hr_points('L1'))}, L2 {len(SV.hr_points('L2'))}) Ø25 x 30 M, EVERY POINT WITHIN 30 M + 6 M THROW"),
             ('HOSE REEL WATER STORAGE', f'2,275 + {nhr - 1} x 1,137.5 = {2275 + (nhr - 1) * 1137.5:,.0f} L → CAP {st:,.0f} L (9.1 M³ TANK)'),
             ('HOSE REEL PUMPS', 'DUTY + STANDBY (ELECTRIC, STANDBY ON GENSET) + JOCKEY, IN UTILITY BLOCK'),
             ('FIRE RESISTANCE', 'STRUCTURE 1 HR; STAIR + LIFT SHAFTS, MDB, LAN 1 HR, FD60 SELF-CLOSING DOORS'),
-            ('SMOKE CONTROL', 'NATURAL: COURT, ARCADE AND DECKS OPEN ON 2+ SIDES; ENCLOSED ROOMS < 100 M²'),
+            ('SMOKE CONTROL', 'NATURAL: COURT, ARCADE, DECKS AND BRIDGE OPEN-SIDED; SMOKE RISES UP THE TWO GAPS AND OUT OF\nTHE CLERESTORIES + OCULUS (NO GLASS LID OVER THE GAPS AT ROOF LEVEL); ENCLOSED ROOMS < 100 M²'),
             ('EMERGENCY LIGHTING + SIGNS', 'SELF-CONTAINED LED, 3 H (MS 619 / MS IEC 60598-2-22)'),
             ('FIRE ALARM INTERFACE', 'LIFTS HOME TO GF, VRF + FANS TRIP, HOLD-OPEN DOORS RELEASE, AUTO-DIAL TO BOMBA'),
-            ('KITCHEN', 'HOOD WITH WET-CHEMICAL SUPPRESSION, SHUNT-TRIP OF COOKING POWER, 1 HR EXHAUST SHAFT'),
+            ('KITCHEN', 'HOOD WITH WET-CHEMICAL SUPPRESSION, SHUNT-TRIP OF COOKING POWER, ESP + CARBON FILTER EXHAUST'),
             ('FIRE APPLIANCE ACCESS', f'2 HARDSTANDINGS 6 M WIDE, {(ST.HS_E.area + ST.HS_S.area) / 6:.0f} M TOTAL, ≈ 1/3 OF THE PERIMETER (BY-LAW 140)'),
             ('HYDRANTS', '2 PILLAR HYDRANTS ON THE PUBLIC MAINS, ≤ 30 M FROM THE HARDSTANDINGS'),
             ('ASSEMBLY POINT', 'SOUTH-EAST LAWN BY THE SELATAN FORECOURT (SEE A-001)'),
@@ -196,13 +208,14 @@ def fire_strategy_sheet(no='F-000'):
     Dd = Drawing('diag')
     for fl, col in (('L1', '#C9CED4'), ('L2', '#9AA3AD')):
         Dd.poly(M.PLATE[fl], 'A-SLAB', fill=col, edge=INK, lw=0.1, alpha=0.6)
-    Dd.poly(SC.ann(M.R_BR0, M.R_BR1), 'A-SLAB', fill='#F6F7F8', edge=INK, lw=0.1)
-    for c in CORES.values(): Dd.poly(c['stair_wall'], 'F-ESCP', fill=SV.GREEN, edge=None)
-    Dd.poly(S4['poly'], 'F-ESCP', fill=SV.GREEN, edge=None)
+    Dd.poly(M.BRIDGE.union(M.WALKWAYS), 'A-SLAB', fill='#F6F7F8', edge=INK, lw=0.1)
+    for c in CORES.values():
+        if c['stair'] is not None: Dd.poly(c['stair_wall'], 'F-ESCP', fill=SV.GREEN, edge=None)
+    for st_ in EXT.values(): Dd.poly(st_['poly'], 'F-ESCP', fill=SV.GREEN, edge=None)
     for s in SC.SPINES: Dd.text(P(31, s['b']), s['k'], 'A-ANNO', size=3.0, weight='bold')
     S.place(Dd, 250, tuple(C), (190, 250))
     D.text((30, y1 - 4), '5  ESCAPE DIAGRAM (1:250)', 'X-TITL', size=3.6, ha='left', va='top', weight='bold')
-    D.text((30, 95), 'GREEN = PROTECTED STAIRS C1, C2 (ENCLOSED, FD60), OPEN STAIR S3, EXTERNAL STAIR S4.\nLIGHT GREY = FIRST FLOOR, DARK = SECOND FLOOR. EVERY FLOOR HAS ≥ 2 STAIRS IN DIFFERENT DIRECTIONS.', 'X-TITL', size=2.6, ha='left', va='top')
+    D.text((30, 95), 'GREEN = PROTECTED STAIRS C1, C2 (ENCLOSED, FD60) IN THE INNER RING; EXTERNAL STAIRS S4 + S5 FROM THE OUTER RING.\nLIGHT GREY = FIRST FLOOR, DARK = SECOND FLOOR (INNER RING). THE BRIDGE REACHES BOTH RINGS BY 4 WALKWAYS; EVERY FLOOR HAS ≥ 2 STAIRS.', 'X-TITL', size=2.6, ha='left', va='top')
     drawing_title(D, (40, 30), 'F', title, None, 'UBBL 1984 (PART VII + 10TH SCHEDULE) · MS 1184 · TO BE AGREED WITH BOMBA AT THE FIRE PLAN SUBMISSION')
     finish(S, F, D, no, title, 'NTS', None, ['BASIS: UBBL 1984 AS AMENDED. WHERE THIS SHEET STATES A FIGURE IT IS COMPUTED FROM THE MODEL ON THE SAME DATE AS THE PLANS.'], y, x0)
     return S, []
@@ -215,7 +228,7 @@ def plumbing_calc_sheet(no='P-000'):
     rows = [('STAFF (MANAGEMENT 12 + TENANTS 16 + CAFE 4)', '32 P', '70 L', '2,240'), ('VISITORS (PEAK DAY, ESTIMATE)', '1,000 P', '5 L', '5,000'),
             ('CAFE (MEALS)', '100', '10 L', '1,000'), ('MUSOLLA WUDHU', '300', '3 L', '900'), ('CLEANING + LANDSCAPE', '—', '—', '1,000'), ('TOTAL DAILY DEMAND', '', '', '10,140 L')]
     y1 = table(D, 30, 805, [('USE', 90, 'left'), ('NO.', 20, 'right'), ('L / UNIT / DAY', 26, 'right'), ('L / DAY', 24, 'right')], rows, title='1  WATER DEMAND (PROVISIONAL — SPAN TO CONFIRM)', bold_last=True)
-    rows = [('SUCTION TANK (UTILITY BLOCK, GROUND)', '2 x 1.5 x 2.0', '6.0 M³'), ('ROOF TANK (TANK ROOM ON CORE 2, FL +12.900)', '2 NOS. 2 x 2 x 1 SECTIONAL FRP', '7.2 M³'),
+    rows = [('SUCTION TANK (UTILITY BLOCK, GROUND)', '2 x 1.5 x 2.0', '6.0 M³'), ('ROOF TANK (TANK ROOM ON CORE 2 UNDER THE FUNNEL, FL +12.200)', '3.0 x 2.4 x 1.0 SECTIONAL FRP', '7.2 M³'),
             ('TOTAL DOMESTIC STORAGE', '≥ 1 DAY', '13.2 M³ ≥ 10.1'), ('FIRE (HOSE REEL) TANK, SEPARATE', 'UBBL 10TH SCHEDULE CAP', '9.1 M³')]
     y1 = table(D, 30, y1 - 2, [('STORAGE', 90, 'left'), ('SIZE', 46, 'left'), ('VOLUME', 24, 'right')], rows, title='2  STORAGE')
     fx = [('PUBLIC TOILETS (2 BANKS: GF + L1)', 'MALE', '3 WC (PwD, PARENT, STD) + 2 URINALS + 3 BASINS PER BANK'), ('', 'FEMALE', '3 WC (PwD, PARENT, STD) + 3 BASINS PER BANK'),
@@ -224,7 +237,7 @@ def plumbing_calc_sheet(no='P-000'):
           ('SHOPS (8)', '', 'PREP SINK EACH'), ('CAFE', '', 'DOUBLE SINK + HAND BASIN, VIA GREASE TRAP'), ('HAND WASH (B3)', '', '6 BASINS IN A TROUGH BY THE CAFE')]
     y1 = table(D, 30, y1 - 2, [('AREA', 62, 'left'), ('', 16, 'left'), ('FITTINGS', 104, 'left')], fx, title='3  SANITARY FITTINGS PROVIDED')
     rc = ST.rain_calc()
-    rows = [('SOIL + VENT STACKS', 'SVP 1 + 2 (TOILET BANKS), SVP W (WUDHU, COLUMN 21/B), SVP SW (ADMIN, COLUMN 13/B)'),
+    rows = [('SOIL + VENT STACKS', 'SVP 1 + 2 (TOILET BANKS GF + L1), SVP E (L1 JANITOR), SVP W1 + W2 (WUDHU, IN SHOP-WALL CASINGS),\nSVP N (ADMIN PANTRY + WC); ALL VENT ABOVE THE FUNNEL / OUTER TIER'),
             ('BELOW-SLAB DRAINS', 'uPVC Ø100 AT 1:60 MIN TO IC AT R31; MAX 6 M FROM A WC TO THE STACK'),
             ('EXTERNAL SEWER', 'uPVC Ø150 AT 1:100 IN 3 LINES (E, N, W) TO MH-S → IWK PUBLIC SEWER (SOUTH ROAD)'),
             ('GREASE TRAP', 'PRECAST, 2-CHAMBER, OUTSIDE THE CAFE KITCHEN (NORTH)'),
@@ -237,7 +250,7 @@ def plumbing_calc_sheet(no='P-000'):
     X0, Y0 = 420, 520; lv = {'GF': 0, 'L1': 75, 'L2': 140, 'TR': 200}
     for k, z in lv.items():
         D.line([(X0 - 20, Y0 + z), (X0 + 330, Y0 + z)], 'P-CWAT', lw=0.15, color='#9AA3AD', ls='--')
-        D.text((X0 - 22, Y0 + z + 2), {'GF': 'GF +0.900', 'L1': 'L1 +5.400', 'L2': 'L2 +9.600', 'TR': 'TANK ROOM +12.900'}[k], 'X-TITL', size=1.8, ha='right', va='bottom', weight='bold')
+        D.text((X0 - 22, Y0 + z + 2), {'GF': 'GF +0.900', 'L1': 'L1 +5.400', 'L2': 'L2 +9.600', 'TR': 'TANK ROOM +12.200'}[k], 'X-TITL', size=1.8, ha='right', va='bottom', weight='bold')
     def bx(x, yy, w, h, t, col=ST.BLUE):
         D.poly(box(x, yy, x + w, yy + h), 'P-EQPT', fill='white', edge=col, lw=0.3); D.text((x + w / 2, yy + h / 2), t, 'P-EQPT', size=1.6, color=col, weight='bold')
     bx(X0 - 10, Y0 - 45, 40, 18, 'SPAN METER\nØ50')
@@ -254,17 +267,17 @@ def plumbing_calc_sheet(no='P-000'):
     D.line([(X0 + 172, Y0 + lv['TR'] + 14), (X0 + 190, Y0 + lv['TR'] + 14)], 'P-CWAT', lw=0.4, color=ST.BLUE)
     D.line([(X0 + 236, Y0 + lv['TR'] + 14), (X0 + 250, Y0 + lv['TR'] + 14), (X0 + 250, Y0 + lv['L1'] + 3), (X0 + 320, Y0 + lv['L1'] + 3)], 'P-CWAT', lw=0.4, color=ST.BLUE)
     D.line([(X0 + 250, Y0 + lv['L2'] + 3), (X0 + 320, Y0 + lv['L2'] + 3)], 'P-CWAT', lw=0.4, color=ST.BLUE)
-    D.text((X0 + 255, Y0 + lv['L1'] + 5), 'BOOSTED: L1 TOILETS, JANITOR, PANTRY', 'P-CWAT', size=1.5, color=ST.BLUE, ha='left', va='bottom')
+    D.text((X0 + 255, Y0 + lv['L1'] + 5), 'BOOSTED: L1 TOILETS, JANITOR, ADMIN PANTRY + WC', 'P-CWAT', size=1.5, color=ST.BLUE, ha='left', va='bottom')
     D.text((X0 + 255, Y0 + lv['L2'] + 5), 'BOOSTED: WUDHU M + F, JANITOR', 'P-CWAT', size=1.5, color=ST.BLUE, ha='left', va='bottom')
     D.line([(X0 + 306, Y0 - 36), (X0 + 320, Y0 - 36), (X0 + 320, Y0 + lv['L2'] + 40)], 'F-EQPT', lw=0.4, color=ST.RED, ls='--')
     for k in ('GF', 'L1', 'L2'):
-        D.line([(X0 + 320, Y0 + lv[k] + 12), (X0 + 328, Y0 + lv[k] + 12)], 'F-EQPT', lw=0.4, color=ST.RED); D.text((X0 + 330, Y0 + lv[k] + 12), 'HR x 3', 'F-EQPT', size=1.5, color=ST.RED, ha='left')
+        D.line([(X0 + 320, Y0 + lv[k] + 12), (X0 + 328, Y0 + lv[k] + 12)], 'F-EQPT', lw=0.4, color=ST.RED); D.text((X0 + 330, Y0 + lv[k] + 12), f'HR x {len(SV.hr_points(k))}', 'F-EQPT', size=1.5, color=ST.RED, ha='left')
     D.text((X0 + 60, Y0 + lv['TR'] + 46), '5  COLD WATER + HOSE REEL SCHEMATIC (NTS)', 'X-TITL', size=2.4, ha='left', weight='bold')
     # sanitary stack diagram
     X1, Y1 = 420, 110
     D.text((X1, Y1 + 210), '6  SOIL STACK DIAGRAM (NTS)', 'X-TITL', size=2.4, ha='left', weight='bold')
-    for i, (nm, fls) in enumerate((('SVP 1', 'GF L1'), ('SVP 2', 'GF L1'), ('SVP W', 'L2'), ('SVP SW', 'L1'))):
-        x = X1 + 20 + i * 75
+    for i, (nm, fls) in enumerate((('SVP 1', 'GF L1'), ('SVP 2', 'GF L1'), ('SVP E', 'L1'), ('SVP W1', 'L2'), ('SVP W2', 'L2'), ('SVP N', 'L1'))):
+        x = X1 + 10 + i * 56
         D.line([(x, Y1), (x, Y1 + 170)], 'P-SANI', lw=0.5, color=ST.BROWN)
         D.text((x, Y1 + 175), nm + ' Ø100\nVENT 600 ABOVE ROOF', 'P-SANI', size=1.5, color=ST.BROWN, va='bottom')
         for k, z in (('GF', 10), ('L1', 75), ('L2', 140)):
@@ -311,11 +324,13 @@ def schedules_sheet(no='A-600'):
     y2 = table(D, 400, 805, [('TYPE', 12, 'left'), ('DESCRIPTION', 120, 'left'), ('FIRE', 16, 'left'), ('NO.', 12, 'right')], rows, title='2  DOOR SCHEDULE (COUNTED FROM THE PLANS)', size=1.6)
     y2 = table(D, 400, y2 - 2, [('ROOM TYPE', 44, 'left'), ('FLOOR', 44, 'left'), ('WALL', 44, 'left'), ('CEILING', 44, 'left')], [tuple(wrap(v, 26) for v in r) for r in FINISH], title='3  FINISHES', size=1.5, lh=2.7)
     gl = [('G1', 'CURTAIN WALL, DGU 6 LOW-E + 12 + 6 HS, U ≤ 2.0, SHGC ≤ 0.35 (MS 1525)', 'L1/L2 FACADE BEHIND FINS'), ('G2', 'SHOPFRONT 12 MM TOUGHENED, FRAMELESS', 'GF SHOPS, CAFE'),
-          ('G3', 'FIXED GLAZED SCREEN 10.38 LAMINATED', 'ADMIN, GALLERY SIDES'), ('G4', 'BALUSTRADE 17.52 LAMINATED, 1100 HIGH', 'RING BRIDGE, DECK EDGES')]
+          ('G3', 'FIXED GLAZED SCREEN 10.38 LAMINATED', 'ROOMS FACING THE GAPS, ADMIN, GALLERY'), ('G4', 'BALUSTRADE 17.52 LAMINATED, 1100 HIGH', 'RING BRIDGE, WALKWAYS, EVERY GAP EDGE'),
+          ('G5', 'WALK-ON ROOFLIGHT: 3-PLY 12 HS LAMINATED, OPAL INTERLAYER, ANTI-SLIP FRIT, 1.5 KN/M² (MAINT.)', 'THE GAPS AT +5.400 OVER GF ROOMS'),
+          ('G6', 'CLERESTORY: FIXED LOUVRED 10.38 LAMINATED BLADES, 45° WEATHER LAP + INSECT MESH', 'BETWEEN THE ROOF TIERS'), ('G7', 'ROOF SLOT: 6 + 12 + 6.38 LAMINATED DGU, FRITTED', 'GATE AXES IN THE OUTER + MIDDLE TIERS')]
     y2 = table(D, 400, y2 - 2, [('TYPE', 12, 'left'), ('SPECIFICATION', 100, 'left'), ('WHERE', 64, 'left')], gl, title='4  GLAZING', size=1.6)
     st = LS.seats()
     rows = [('INNER RING · GF COURT RIM', f'{len(LS.INNER)}', f"{sum(LS.ann_sec(*LS.POCKET_IN_R, a, b).area for a, b in LS.INNER):.0f}", wrap(LS.PALETTE['INNER'][1], 52)),
-            ('INNER RING · L1 SKY POCKETS', f'{len(LS.SKY)}', f"{sum(q.area for q in LS.SKY):.0f}", wrap('AS INNER RING, IN 600-DEEP TROUGHS ON THE FIRST-FLOOR DECK BY THE RING BRIDGE (C&S TO ALLOW 12 KN/M²)', 52)),
+            ('INNER RING · L1 SKY POCKETS', f'{len(LS.SKY)}', f"{sum(q.area for q in LS.SKY):.0f}", wrap('AS INNER RING, IN 600-DEEP TROUGHS ALONG THE COURT BALCONY EDGE, TRAILING INTO THE GAP (C&S TO ALLOW 12 KN/M²)', 52)),
             ('GATE GARDENS · UNDER THE HANGING L1', f'{len(ST.GATE)}', f"{sum(g['poly'].area for g in ST.GATE):.0f}", wrap(LS.PALETTE['GATE'][1], 52)),
             ('OUTER RING · TAMAN ULAM', f'{len(ST.OUTER)}', f"{sum(q.area for q in ST.OUTER):.0f}", wrap(LS.PALETTE['OUTER'][1], 52))]
     y2 = table(D, 400, y2 - 2, [('POCKET GARDENS', 52, 'left'), ('NO.', 10, 'right'), ('M²', 12, 'right'), ('PLANTING', 100, 'left')], rows, title='5  LANDSCAPE: POCKET GARDENS', size=1.5, lh=2.7)
@@ -346,9 +361,9 @@ def detail_facade():
     # glazing line (curtain wall) set back 150 from the slab edge, mullion + transoms
     D.poly(box(-0.25, 5.45, -0.15, 9.0), 'A-GLAZ', fill='#BFD9E6', edge=INK, lw=0.15)
     D.poly(box(-0.28, 5.45, -0.12, 5.6), 'A-GLAZ', fill='#9AA3AD', edge=INK, lw=0.1)
-    # L2 slab (where present) + roof
-    D.poly(box(-1.6, 9.0, 0.0, 9.6), 'S-DETL', fill=hatch, edge=INK, lw=0.25); D.poly(box(0.0, 8.95, 0.03, 9.65), 'A-ELEV', fill='#3A4048', edge=INK, lw=0.1)
-    D.poly(box(-0.25, 9.65, -0.15, 15.6), 'A-GLAZ', fill='#BFD9E6', edge=INK, lw=0.15)
+    # the outer ring is one storey: the curtain wall runs from the first floor to the outer roof tier
+    D.poly(box(-0.25, 9.0, -0.15, 15.6), 'A-GLAZ', fill='#BFD9E6', edge=INK, lw=0.15)
+    D.poly(box(-0.28, 8.95, -0.12, 9.05), 'A-GLAZ', fill='#9AA3AD', edge=INK, lw=0.1)
     zt = 16.2
     D.poly(Polygon([(-1.6, zt - 0.5), (0.0, zt - 0.5), (1.8, zt - 0.12), (1.8, zt), (-1.6, zt)]), 'S-DETL', fill='#E6E8EB', edge=INK, lw=0.25)
     D.poly(box(-1.6, zt - 0.5, 1.8, zt - 0.45), 'S-DETL', fill=INK, edge=None)
@@ -362,8 +377,8 @@ def detail_facade():
     lead(D, (0.25, 11.0), (1.2, 11.0), 'ALUMINIUM FIN 450 x 60 HOLLOW,\nPVDF, ANGLE 18°-90° (SET\nPER BAY), PIN BRACKETS\nTOP + BOTTOM, 750 C/C')
     lead(D, (1.55, zt - 0.2), (2.2, zt + 0.6), 'CONCEALED GUTTER SS316 400 W,\nSUMP + Ø150 OUTLET → RWDP\nIN FIN CASING (DETAIL 2)')
     lead(D, (-0.8, zt - 0.2), (-2.2, zt + 0.7), 'STANDING SEAM 0.9 AL, 100 ROCKWOOL,\nPURLINS ON TAPERED STEEL RAFTER', 'right')
-    lead(D, (-0.8, 9.3), (-2.2, 9.9), 'L2 SLAB (CRESTS ONLY) — ELSEWHERE\nTHE GLAZING RUNS TO THE ROOF', 'right')
-    for z, t in ((5.4, '+5.400 FFL L1'), (9.6, '+9.600 FFL L2'), (zt, '+10.200 TO +16.200 ROOF')):
+    lead(D, (-0.2, 9.0), (-2.2, 9.9), 'OUTER RING = ONE STOREY: CURTAIN WALL\nRUNS UP TO THE OUTER ROOF TIER\n(TRANSOM AT +9.000)', 'right')
+    for z, t in ((5.4, '+5.400 FFL L1'), (zt, '+10.200 TO +16.200 OUTER TIER')):
         D.text((2.0, z), t, 'A-DIMS', size=1.6, ha='left', weight='bold')
     _dim(D, (0.0, 4.3), (0.48, 4.3), -0.25, '450')
     _dim(D, (0.0, zt + 0.25), (1.8, zt + 0.25), 0.2, '1800 ROOF OVERHANG')
@@ -387,15 +402,18 @@ def detail_rwdp():
 def detail_soffit():
     """1:20 section through the hanging first floor over a concave gate (radial section, x = radius)"""
     D = Drawing('DET 3')
-    D.poly(box(19.0, 4.8, 26.5, 5.4), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.25)
+    D.poly(box(21.5, 4.8, 26.5, 5.4), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.25)
+    D.poly(box(19.0, 5.05, 20.0, 5.4), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.25)
+    for xg in (20.0, 21.5): D.poly(box(xg - (0.02 if xg > 21 else 0.0), 5.4, xg + (0.0 if xg > 21 else 0.02), 6.5), 'A-GLAZ', fill='#BFD9E6', edge=INK, lw=0.1)
     D.poly(Polygon([(23.0, 4.8), (26.5, 5.05), (26.5, 4.8)]), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.25)
-    D.poly(Polygon([(19.0, 4.55), (23.0, 4.55), (26.47, 4.98), (26.5, 5.0), (26.5, 4.96), (23.0, 4.52), (19.0, 4.52)]), 'A-ELEV', fill='#DCD8CF', edge=INK, lw=0.12)
+    D.poly(Polygon([(21.5, 4.55), (23.0, 4.55), (26.47, 4.98), (26.5, 5.0), (26.5, 4.96), (23.0, 4.52), (21.5, 4.52)]), 'A-ELEV', fill='#DCD8CF', edge=INK, lw=0.12)
     D.poly(box(22.82, 0.9, 23.18, 4.8), 'S-DETL', fill='#BFC4CA', edge=INK, lw=0.25)
     D.line([(18.5, 0.9), (27.0, 0.9)], 'A-SITE', lw=0.3)
-    lead(D, (21.0, 4.53), (20.0, 3.4), 'GRC SOFFIT PANELS 15 MM ON STAINLESS\nHANGERS, CURVED TO THE CONVEX EDGE;\nLINEAR LED IN THE SHADOW GAP', 'right')
-    lead(D, (25.0, 5.2), (25.4, 6.3), 'RC CANTILEVER 3.5 M FROM RING C,\nTAPERED 600 → 250 AT THE EDGE')
-    lead(D, (23.0, 2.5), (24.2, 2.0), 'RING C COLUMN Ø350 (GRID C)')
-    lead(D, (19.6, 4.53), (19.6, 3.0), 'L1 WC DRAIN Ø100 1:40\nIN SOFFIT VOID (ADMIN)', 'right')
+    lead(D, (22.0, 4.53), (21.0, 3.4), 'GRC SOFFIT PANELS 15 MM ON STAINLESS\nHANGERS, CURVED TO THE CONVEX EDGE;\nLINEAR LED IN THE SHADOW GAP', 'right')
+    lead(D, (25.0, 5.2), (25.4, 6.3), 'RC CANTILEVER 3.5 M FROM RING E,\nTAPERED 600 → 250 AT THE EDGE')
+    lead(D, (23.0, 2.5), (24.2, 2.0), 'RING E COLUMN Ø350 (GRID E)')
+    lead(D, (20.75, 5.4), (20.2, 6.9), 'GAP 1500 TO THE RING BRIDGE: OPEN\nOVER THE GATE (DAYLIGHT ON THE CANOPY)', 'right')
+    lead(D, (19.5, 5.2), (19.0, 6.3), 'RING BRIDGE EDGE (350 SLAB)', 'right')
     _dim(D, (23.0, 5.6), (26.5, 5.6), 0.25, '3500 HANGING FIRST FLOOR')
     _dim(D, (27.0, 0.9), (27.0, 4.52), -0.3, '3620 CLEAR')
     return D
@@ -491,7 +509,7 @@ def details_sheet(no='A-500'):
     d4 = detail_pool(); S.place(d4, 20, (0.0, 0.0), (860, 300))
     drawing_title(side, (690, 238), '4', 'TITIK POOL + MAST BASE', 20)
     d5 = detail_stair(); S.place(d5, 20, (0.0, 0.0), (380, 60))
-    drawing_title(side, (560, 40), '5', 'STAIR FLIGHT (CORES 1-3)', 20)
+    drawing_title(side, (560, 40), '5', 'STAIR FLIGHT (CORES 1 + 2)', 20)
     d7 = detail_canopy(); S.place(d7, 50, (0.0, 0.0), (790, 62))
     drawing_title(side, (690, 26), '7', 'ANYAMAN CANOPY, CROSS-SECTION', 50, 'SELATAN GATE, 1.2 M OUTSIDE THE L1 EDGE')
     d8 = detail_planter(); S.place(d8, 20, (0.0, 0.0), (915, 110))
@@ -507,7 +525,7 @@ def cover_sheet(no='A-000', sheet_list=()):
     D = Drawing('cov', paper=True)
     D.text((40, 790), 'TITIK TEMU', 'X-TITL', size=34, ha='left', va='top', weight='bold')
     D.text((42, 752), 'SIMPUL RASA SEMENANJUNG', 'X-TITL', size=9, ha='left', va='top', color=ACCENT, weight='bold')
-    D.text((42, 738), 'ESPLANADE LOCAL COMMERCIAL HUB · SITE C · TEMERLOH, PAHANG\nCOMPLETE BUILDING DRAWING SET (V3, AFTER CRIT 1): ARCHITECTURE, BOMBA, PLUMBING + DRAINAGE, ELECTRICAL + ACMV', 'X-TITL', size=3.0, ha='left', va='top')
+    D.text((42, 738), 'ESPLANADE LOCAL COMMERCIAL HUB · SITE C · TEMERLOH, PAHANG\nCOMPLETE BUILDING DRAWING SET (V3.1: RING BRIDGE + STEPPED TIERS): ARCHITECTURE, BOMBA, PLUMBING + DRAINAGE, ELECTRICAL + ACMV', 'X-TITL', size=3.0, ha='left', va='top')
     E = SE.elevation(180.0, 'S'); S.place(E, 200, (0, 8), (300, 520))
     D.text((60, 455), 'SOUTH ELEVATION 1:200 (FROM JALAN TOK MUDA AWANG NGAH)', 'X-TITL', size=2.6, ha='left', weight='bold')
     G = plans.plan_drawing('GF'); S.place(G, 250, tuple(C), (300, 225), clip=(40, 60, 560, 430))
@@ -516,11 +534,127 @@ def cover_sheet(no='A-000', sheet_list=()):
     table(D, 600, 720, [('SHEET', 22, 'left'), ('TITLE', 140, 'left'), ('SCALE', 28, 'left')], rows, title='DRAWING LIST (A0, TRUE SCALE)', size=1.6, lh=2.9)
     notes = ['ALL DRAWINGS ARE PRINTED AT TRUE SCALE ON A0 (1189 x 841). DXF FILES (METRES, NAMED LAYERS) ARE ISSUED WITH THE SET FOR THE 3D MODEL.',
              'SITE COORDINATES IN METRES: X = EAST, Y = NORTH, ORIGIN = SOUTH-WEST SITE CORNER. CENTRE C = (70.3, 27.0). LEVELS ABOVE SITE DATUM ±0.000.',
-             'GEOMETRY: ONE CENTRE C; RINGS A R9.5 (BRIDGE INNER), B R12.5, C R23.0 (GF WALL), D R26.5 (L1/L2 EDGE); ROOF EDGE R28.3; COURT R9.0; POOL R2.5.',
-             'GATES: TIMUR 27.9°, SELATAN 182.7° (MAIN), TENGAH 242.8°, UTARA 317.7°. WAVE ROOF HIGH AT SELATAN + UTARA (+16.200), LOW AT TIMUR + TENGAH (+10.200).',
+             'GEOMETRY: ONE CENTRE C. THREE RINGS STEP UP TO THE CENTRE: INNER RING R9.5-15.5 (GF, L1, L2), FREE-STANDING RING BRIDGE R17.0-20.0 (L1), OUTER RING R21.5-26.5 (GF, L1), WITH 1.5 M DAYLIGHT GAPS BETWEEN; GF ROOMS R12.5-23.0; ROOF EDGE R28.3; COURT R9.0; POOL R2.5.',
+             'GRID RINGS: A R9.5, B R11.0, C R15.5, D R18.5 (BRIDGE), E R23.0, F R26.5. THE BRIDGE MEETS THE RINGS ONLY THROUGH 4 WALKWAYS (3 M) ON THE GATE AXES.',
+             'GATES: TIMUR 27.9°, SELATAN 182.7° (MAIN), TENGAH 242.8°, UTARA 317.7°. THE ROOF IS THREE TIERS, EACH 1.8 M ABOVE THE ONE OUTSIDE IT, ALL ON THE WAVE: OUTER +10.2 TO +16.2, MIDDLE +12.0 TO +18.0, FUNNEL RIM +13.8 TO +19.8; CLERESTORIES BETWEEN THEM.',
              'CODES: UBBL 1984, MS 1184 (ACCESS), MS 1525 (ENERGY), MS 1228 (SEWERAGE), MSMA 2ND ED. (DRAINAGE), SPAN GUIDELINES (WATER), MS IEC 62305 (LIGHTNING).',
              'ENTRANCE CANOPIES (ANYAMAN LATTICE) RUN FROM THE COURT EDGE THROUGH EACH GATE TO THE SETBACK LINE; POCKET GARDENS FORM AN INNER RING (COURT RIM + L1 SKY POCKETS), GATE GARDENS AND AN OUTER RING (TAMAN ULAM).',
              'SERVICES AND FIRE DRAWINGS ARE DESIGN-STAGE PROPOSALS FOR A STUDENT PROJECT; ENGINEERS AND BOMBA MUST CHECK THEM BEFORE ANY REAL USE.']
     notes_block(D, 600, 300, 'GENERAL NOTES', notes, width=80, size=2.6)
     finish(S, F, D, no, title, 'NTS', None, None, y, x0)
     return S, []
+
+# --------------------------------------------------------------------------------------------- A-501 ring bridge, gaps, clerestories
+def detail_rings(b=300.0):
+    """1:50 radial section through the three rings at bearing b (x = radius from C, z = level): inner ring (GF+L1+L2),
+    gap, free-standing ring bridge, gap, outer ring, and the three roof tiers with the two clerestories"""
+    D = Drawing('DET 9'); H = '#BFC4CA'; G = '#BFD9E6'
+    Pb = lambda r: P(r, b)
+    W = SC.roof_h(b)
+    D.line([(8.0, 0.9), (29.5, 0.9)], 'A-SITE', lw=0.35); D.poly(box(8.0, 0.0, 29.5, 0.9), 'A-SITE', fill='#E9E5DC', edge=None, z=1)
+    # ground floor: shop under the inner ring + the gaps, arcade in front
+    D.poly(box(12.5 - 0.06, 0.9, 12.5 + 0.06, 4.2), 'A-GLAZ', fill=G, edge=INK, lw=0.1)
+    D.poly(box(22.9, 0.9, 23.1, 4.8), 'S-DETL', fill=H, edge=INK, lw=0.15)
+    D.line([(12.6, 4.2), (22.9, 4.2)], 'A-HIDN', lw=0.12, ls='--')
+    D.text((17.5, 2.4), 'GROUND FLOOR ROOM (SHOP A1)\nDAYLIT FROM THE GAPS ABOVE', 'A-ANNO', size=1.5)
+    for rc in (11.0, 15.5, 18.5, 23.0):
+        top = {11.0: 4.8, 15.5: 4.8, 18.5: 4.7, 23.0: 4.8}[rc]
+        D.poly(box(rc - 0.175, 0.9, rc + 0.175, top), 'S-DETL', fill=H, edge=INK, lw=0.15)
+    D.text((18.5, 0.45), 'COLUMN D Ø350\n(BRIDGE ONLY)', 'A-ANNO', size=1.2)
+    # first floor: inner ring slab + room glazing to the gap, bridge with ring beam, outer ring slab
+    D.poly(box(9.5, 4.8, 15.5, 5.4), 'S-DETL', fill=H, edge=INK, lw=0.2)
+    D.poly(box(17.0, 5.05, 20.0, 5.4), 'S-DETL', fill=H, edge=INK, lw=0.2); D.poly(box(18.1, 4.7, 18.9, 5.05), 'S-DETL', fill=H, edge=INK, lw=0.2)
+    D.poly(box(21.5, 4.8, 26.5, 5.4), 'S-DETL', fill=H, edge=INK, lw=0.2)
+    for x0, x1 in ((15.5, 16.95), (20.05, 21.5)):                       # opal rooflights, carried by the ground floor, 50 short of the bridge
+        D.poly(box(x0, 5.27, x1, 5.37), 'A-GLAZ', fill='#E3F0F7', edge=INK, lw=0.1)
+        D.poly(box((x1 - 0.12) if x0 < 17 else x0, 4.95, (x1) if x0 < 17 else x0 + 0.12, 5.27), 'S-DETL', fill='#9AA3AD', edge=INK, lw=0.08)
+    for xb in (9.55, 15.45, 17.05, 19.95, 21.55):                       # glass balustrades 1100
+        D.poly(box(xb - 0.01, 5.4, xb + 0.01, 6.5), 'A-GLAZ', fill=G, edge=INK, lw=0.08)
+    zt_ = RG.out_under(Pb(26.0))
+    D.poly(box(15.44, 5.4, 15.5, 9.0), 'A-GLAZ', fill=G, edge=INK, lw=0.1); D.poly(box(21.5, 5.4, 21.56, zt_), 'A-GLAZ', fill=G, edge=INK, lw=0.1)
+    D.poly(box(26.44, 5.4, 26.5, zt_), 'A-GLAZ', fill=G, edge=INK, lw=0.1)
+    for rp in M.POST_R: D.poly(box(rp - 0.075, 5.4, rp + 0.075, RG.mid_under(Pb(rp))), 'S-DETL', fill='#8C949C', edge=INK, lw=0.1)
+    # second floor: inner ring only
+    D.poly(box(9.5, 9.0, 15.5, 9.6), 'S-DETL', fill=H, edge=INK, lw=0.2)
+    D.poly(box(15.44, 9.6, 15.5, RG.fun_under(Pb(15.5))), 'A-GLAZ', fill=G, edge=INK, lw=0.1)
+    D.poly(box(9.55 - 0.01, 9.6, 9.55 + 0.01, 10.7), 'A-GLAZ', fill=G, edge=INK, lw=0.08)
+    # roof tiers
+    def tier(r0, r1, top, und, fill):
+        rs = np.linspace(r0, r1, 40)
+        D.poly(Polygon([(r, top(Pb(r))) for r in rs] + [(r, und(Pb(r))) for r in rs[::-1]]), 'A-ROOF', fill=fill, edge=INK, lw=0.2)
+    tier(8.0, RG.R_FUN, RG.fun_top, RG.fun_under, '#E6E8EB')
+    tier(RG.T_MID[0], RG.T_MID[1], RG.mid_top, RG.mid_under, '#D4D8DD')
+    tier(RG.T_OUT[0], 28.3, RG.out_top, RG.out_under, '#C4CAD0')
+    for rr_, lo, hi in ((16.25, RG.mid_top, RG.fun_under), (20.9, RG.out_top, RG.mid_under)):
+        z0, z1 = lo(Pb(rr_)), hi(Pb(rr_))
+        D.poly(box(rr_ - 0.03, z0, rr_ + 0.03, z1), 'A-GLAZ', fill=G, edge=INK, lw=0.08)
+        for zz in np.arange(z0 + 0.2, z1 - 0.05, 0.22): D.line([(rr_ - 0.22, zz + 0.1), (rr_ + 0.22, zz - 0.1)], 'A-GLAZ', lw=0.1)
+    # daylight + air
+    for rr_, lo, hi, gx in ((16.25, RG.mid_top, RG.fun_under, 16.25), (20.9, RG.out_top, RG.mid_under, 20.75)):
+        zc = (lo(Pb(rr_)) + hi(Pb(rr_))) / 2
+        for k in (-0.3, 0.3):
+            a, c_ = np.array([rr_ + 2.2 + k, zc + 2.0]), np.array([gx + k * 0.6, 5.45])
+            D.line([a, c_], 'A-ANNO', lw=0.2, color='#E0A100', z=7)
+            t = (c_ - a) / np.linalg.norm(c_ - a); n = np.array([-t[1], t[0]])
+            D.poly(Polygon([c_, c_ - t * 0.35 + n * 0.12, c_ - t * 0.35 - n * 0.12]), 'A-ANNO', fill='#E0A100', edge=None, z=7)
+    for gx in (16.25, 20.75):
+        D.line([(gx, 6.0), (gx, 11.0)], 'A-ANNO', lw=0.18, color='#3E7D3A', ls='--', z=7)
+        D.poly(Polygon([(gx, 11.3), (gx - 0.15, 10.9), (gx + 0.15, 10.9)]), 'A-ANNO', fill='#3E7D3A', edge=None, z=7)
+    # labels
+    lead(D, (12.5, 5.1), (11.0, 6.9), 'INNER RING\nGF + L1 + L2', 'right')
+    lead(D, (18.5, 5.2), (18.5, 7.3), 'RING BRIDGE 3000\n(+5.400, FREE-STANDING)')
+    lead(D, (24.0, 5.1), (25.0, 7.6), 'OUTER RING\nGF + L1')
+    lead(D, (16.2, 5.32), (14.2, 3.3), 'GAP 1500: OPAL GLASS ROOFLIGHT\nON THE GROUND-FLOOR STRUCTURE,\n50 JOINT TO THE BRIDGE (DETAIL 10)', 'right')
+    lead(D, (16.25, RG.mid_top(Pb(16.25)) + 0.6), (12.5, RG.fun_under(Pb(13)) + 1.6), 'INNER CLERESTORY\n(LOUVRED GLASS)', 'right')
+    lead(D, (20.9, RG.out_top(Pb(20.9)) + 0.6), (24.5, RG.mid_top(Pb(20)) + 1.6), 'OUTER CLERESTORY\n(LOUVRED GLASS)')
+    D.text((27.5, RG.out_top(Pb(27)) + 0.6), 'OUTER TIER', 'A-ANNO', size=1.5, weight='bold')
+    D.text((18.5, RG.mid_top(Pb(18.5)) + 0.6), 'MIDDLE TIER  (+1.800)', 'A-ANNO', size=1.5, weight='bold')
+    D.text((11.0, RG.fun_top(Pb(11)) + 0.7), 'FUNNEL  (RIM +3.600)', 'A-ANNO', size=1.5, weight='bold')
+    D.text((22.6, 11.6), 'DAYLIGHT DOWN THE GAPS\n— WARM AIR UP AND OUT', 'A-ANNO', size=1.5, color='#7A5A00')
+    D.text((12.6, 7.4), 'L1 ROOM', 'A-ANNO', size=1.4); D.text((12.6, 10.8), 'L2 ROOM', 'A-ANNO', size=1.4)
+    for x0, x1 in ((15.5, 17.0), (17.0, 20.0), (20.0, 21.5), (21.5, 26.5), (9.5, 15.5)):
+        _dim(D, (x0, -0.6), (x1, -0.6), -0.35, f'{int(round((x1 - x0) * 1000))}')
+    for z, t in ((0.9, '+0.900 GF'), (5.4, '+5.400 L1 · BRIDGE'), (9.6, '+9.600 L2'), (RG.out_top(Pb(26)), f'+{RG.out_top(Pb(26)):.3f} OUTER TIER'),
+                 (RG.mid_top(Pb(18.5)), f'+{RG.mid_top(Pb(18.5)):.3f} MIDDLE TIER'), (RG.fun_rim(b), f'+{RG.fun_rim(b):.3f} FUNNEL RIM')):
+        D.line([(29.0, z), (29.6, z)], 'A-DIMS', lw=0.15); D.text((29.8, z), t, 'A-DIMS', size=1.5, ha='left', weight='bold')
+    ci, co = RG.clerestory(b)
+    D.text((16.25, RG.fun_under(Pb(16.25)) + 0.2), f'{ci * 1000:.0f}', 'A-DIMS', size=1.2, rot=90, ha='left')
+    D.text((20.9, RG.mid_under(Pb(20.9)) + 0.2), f'{co * 1000:.0f}', 'A-DIMS', size=1.2, rot=90, ha='left')
+    return D
+
+def detail_rooflight():
+    """1:10 section at the bridge edge: rooflight on the ground-floor beam, 50 joint, bridge edge + balustrade"""
+    D = Drawing('DET 10'); H = '#BFC4CA'
+    D.poly(box(0.0, 0.0, 0.9, 0.35), 'S-DETL', fill=H, edge=INK, lw=0.2)                     # bridge slab edge (x = R - 17.0)
+    D.poly(box(0.0, -0.25, 0.25, 0.0), 'S-DETL', fill=H, edge=INK, lw=0.2)
+    D.poly(box(0.02, 0.35, 0.04, 1.45), 'A-GLAZ', fill='#BFD9E6', edge=INK, lw=0.1)
+    D.poly(box(0.0, 0.35, 0.12, 0.45), 'S-DETL', fill='#9AA3AD', edge=INK, lw=0.08)
+    D.poly(box(-0.65, -0.35, -0.05, -0.12), 'S-DETL', fill='#9AA3AD', edge=INK, lw=0.12)       # GF steel rooflight beam
+    D.poly(box(-0.6, -0.12, -0.09, -0.03), 'A-GLAZ', fill='#E3F0F7', edge=INK, lw=0.1)          # laminated opal glass
+    D.poly(box(-0.09, -0.1, -0.0, -0.04), 'S-DETL', fill='#333', edge=None)                      # EPDM skirt in the joint
+    D.poly(box(-0.7, -0.85, -0.5, -0.35), 'S-DETL', fill=H, edge=INK, lw=0.15)                   # GF wall below
+    lead(D, (0.45, 0.17), (0.9, 0.75), 'BRIDGE SLAB EDGE 350\n(STEEL BOX RING BEAM)')
+    lead(D, (0.03, 1.2), (0.45, 1.35), 'BALUSTRADE G4, 1100')
+    lead(D, (-0.35, -0.08), (-1.2, 0.6), 'ROOFLIGHT G5: 3 x 12 HS LAMINATED,\nOPAL + ANTI-SLIP FRIT, ON EPDM', 'right')
+    lead(D, (-0.35, -0.24), (-1.2, -0.45), 'STEEL BEAM ON THE GF WALLS\n(THE ROOFLIGHT BELONGS\nTO THE GROUND FLOOR)', 'right')
+    lead(D, (-0.045, -0.07), (0.6, -0.65), '50 MOVEMENT JOINT + EPDM SKIRT:\nTHE BRIDGE IS NOT TIED TO IT')
+    return D
+
+def bridge_sheet(no='A-501'):
+    title = 'RING BRIDGE, GAPS + CLERESTORIES'
+    S, F, x0, y = new_sheet(no, title, 'AS SHOWN @ A0')
+    side = Drawing('side', paper=True)
+    d9 = detail_rings(300.0); S.place(d9, 50, (8.0, 0.0), (60, 230))
+    drawing_title(side, (60, 180), '9', 'RADIAL SECTION THROUGH THE THREE RINGS', 50, 'AT BEARING 300° (WEST, OVER SHOP A1-4 · MANAGER · MALE PRAYER ROOM)')
+    Lp = plans.plan_drawing('L1'); cen = P(18.3, 182.7)
+    S.place(Lp, 50, tuple(cen), (855, 575), clip=(690, 335, 1018, 800))
+    drawing_title(side, (690, 315), '11', 'SELATAN WALKWAY · FIRST FLOOR PLAN', 50, 'INNER RING → GAP → BRIDGE → GAP → OUTER RING')
+    d10 = detail_rooflight(); S.place(d10, 10, (0.0, 0.0), (900, 150))
+    drawing_title(side, (690, 30), '10', 'ROOFLIGHT AT THE BRIDGE EDGE', 10)
+    finish(S, F, side, no, title, 'AS SHOWN', None, [
+        'THE RING BRIDGE STANDS ON ITS OWN COLUMNS (GRID D, R18.5) AND TOUCHES THE BUILDING ONLY THROUGH THE FOUR 3 M WALKWAYS ON THE GATE AXES.',
+        'GAPS: 1500 BETWEEN THE INNER RING AND THE BRIDGE AND BETWEEN THE BRIDGE AND THE OUTER RING. OVER ROOMS THEY ARE WALK-ON OPAL ROOFLIGHTS (MAINTENANCE ONLY) CARRIED BY THE GROUND FLOOR; OVER THE GATES THEY ARE OPEN.',
+        'ROOF: EACH TIER IS 1.8 M ABOVE THE ONE OUTSIDE IT AND KEEPS THE WAVE. THE TIERS OVERLAP 600-700 OVER THE GAPS, SO RAIN IS KEPT OUT WHILE DAYLIGHT AND STACK-EFFECT AIR PASS THROUGH THE CLERESTORIES.',
+        f'CLERESTORY CLEAR HEIGHT: INNER ≥ {min(RG.clerestory(b)[0] for b in range(360)):.2f} M, OUTER ≥ {min(RG.clerestory(b)[1] for b in range(360)):.2f} M (LOWEST AT THE TIMUR + TENGAH VALLEYS).',
+        'MIDDLE TIER: STEEL RAFTERS ON PORTAL FRAMES OF Ø150 POSTS AT BOTH BRIDGE EDGES (EVERY SECOND COLUMN D), CANTILEVERING 1.25 M EACH SIDE.'], y, x0)
+    return S, [(d9, (0, 0)), (d10, (40, 0))]

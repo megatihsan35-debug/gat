@@ -6,9 +6,10 @@ from shapely.geometry import Polygon, Point, LineString, MultiLineString, box
 from shapely.ops import unary_union
 from cad import Drawing, INK
 import plan3 as M
-from plan3 import C, P, d, tdir, SC, FFL, CORES, S4, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
+from plan3 import C, P, d, tdir, SC, FFL, CORES, S4, EXT, R_BR0, R_BR1, R_GF, R_L1, R_COURT, R_POOL, R_OCULUS
 import plans
 import landscape as LS
+import rings as RG
 
 R_ROOF, R_DISC, ROOF_T = SC.R_ROOF, SC.R_DISC, SC.ROOF_T
 R_RIN = M.R_ROOF_IN
@@ -28,15 +29,16 @@ def ground_z(p):
             Rend = SC.spine_end(s['b']).distance(Point(C)) - 6.0
             return 0.9 * min(1.0, max(0.0, (Rend - r) / (Rend - R_BR0)))
     return 0.9 if r <= R_GF + 1.5 else 0.0
-def roof_top(p): return SC.roof_h(brg(p))
-def roof_under(p):
-    r = rad(p); t = roof_top(p)
-    return t - ROOF_T if r <= R_L1 else t - ROOF_T + (ROOF_T - 0.12) * (r - R_L1) / (R_ROOF - R_L1)
-def funnel_top(r): return 11.4 + (13.5 - 11.4) * (r - R_OCULUS) / (R_DISC - R_OCULUS)
-ROOF_FP = SC.ann(R_RIN, R_ROOF).difference(SC.RF_VOID)
-FUNNEL_FP = SC.ann(R_OCULUS, R_DISC)
-L1_FP = unary_union([M.PLATE['L1'], SC.ann(R_BR0, R_BR1)])
-L2_FP = unary_union([M.PLATE['L2'], SC.ann(R_BR0, R_BR1)])
+def roof_top(p): return RG.roof_top_at(p)
+def roof_under(p): return RG.roof_under_at(p)
+def funnel_top(p): return RG.fun_top(p)                    # p = point (the funnel rim follows the wave, so it depends on bearing)
+ROOF_FP = RG.OUT_FP                                       # outer tier
+MID_FP = RG.MID_FP
+FUNNEL_FP = RG.FUN_FP
+L1_FP = M.PLATE['L1']
+L2_FP = M.PLATE['L2']
+THIN = unary_union([M.BRIDGE, M.WALKWAYS, M.WALK])       # 350 slabs: bridge, walkways, gallery walk edge
+def core_top(c): return c.get('top', 13.2)
 
 class Cut:
     def __init__(self, a, b):
@@ -91,14 +93,26 @@ def section(a, b, look_side=1, label='A'):
     for fl, fp in (('L1', L1_FP), ('L2', L2_FP)):
         z0, z1 = SLAB_Z[fl]
         for u0, u1 in X.spans(fp):
-            rmid = rad(X.pt((u0 + u1) / 2))
-            zb = z1 - 0.35 if rmid < R_BR1 + 0.05 else z0
+            pm = X.pt((u0 + u1) / 2)
+            zb = z1 - 0.35 if THIN.contains(Point(pm)) else z0
             D.poly(box(u0, zb, u1, z1), 'A-SLAB', fill=CUT, edge=None, z=5)
-    # ---- roof petals + funnel (cut)
-    for u0, u1 in X.spans(ROOF_FP):
-        band(D, u0, u1, lambda u: roof_under(X.pt(u)), lambda u: roof_top(X.pt(u)), 'A-ROOF', z=5)
-    for u0, u1 in X.spans(FUNNEL_FP):
-        band(D, u0, u1, lambda u: funnel_top(rad(X.pt(u))) - 0.28, lambda u: funnel_top(rad(X.pt(u))), 'A-ROOF', z=5)
+    # the gaps: opal glass rooflights over the rooms (thin, light blue), open over the gates; glass balustrades either side
+    for u0, u1 in X.spans(plans.gap_glass()):
+        D.poly(box(u0, 5.3, u1, 5.42), 'A-GLAZ', fill=GLASS, edge=CUT, lw=0.09, z=5)
+    for u0, u1 in X.spans(M.GAPS):
+        for uu in (u0, u1): D.line([(uu, 5.4), (uu, 6.5)], 'A-GLAZ', lw=0.18, color='#5E9CBB', z=6)
+    # ---- the three roof tiers (cut): outer tier, middle tier over the bridge, the funnel over the inner ring + court
+    for fp, top, und in ((ROOF_FP, RG.out_top, RG.out_under), (MID_FP, RG.mid_top, RG.mid_under), (FUNNEL_FP, RG.fun_top, RG.fun_under)):
+        for u0, u1 in X.spans(fp):
+            band(D, u0, u1, lambda u, f=und: f(X.pt(u)), lambda u, f=top: f(X.pt(u)), 'A-ROOF', z=5)
+    for u0, u1 in X.spans(RG.SLOT_GLASS):
+        band(D, u0, u1, lambda u: roof_top(X.pt(u)) - 0.06, lambda u: roof_top(X.pt(u)), 'A-GLAZ', fill=GLASS, z=5)
+    # clerestories: louvred glass between the tiers where the cut crosses R16.25 and R20.9
+    us = np.linspace(0, X.L, int(X.L / 0.05)); rs = np.array([rad(X.pt(u)) for u in us])
+    for Rc, lo, hi in ((16.25, RG.mid_top, RG.fun_under), (20.9, RG.out_top, RG.mid_under)):
+        for i in np.where(np.diff(np.sign(rs - Rc)) != 0)[0]:
+            p = X.pt(us[i]); D.poly(box(us[i] - 0.05, lo(p), us[i] + 0.05, hi(p)), 'A-GLAZ', fill=GLASS, edge=CUT, lw=0.09, z=5)
+            for zz in np.arange(lo(p) + 0.25, hi(p) - 0.1, 0.3): D.line([(us[i] - 0.2, zz), (us[i] + 0.2, zz - 0.12)], 'A-GLAZ', lw=0.07, color=CUT, z=6)
     # ---- walls (cut) per floor, glazing
     tops = {'GF': lambda p: 4.8, 'L1': lambda p: 9.0 if M.PLATE['L2'].buffer(0.3).contains(Point(p)) else roof_under(p), 'L2': lambda p: roof_under(p) - 0.0}
     labels = []
@@ -107,7 +121,9 @@ def section(a, b, look_side=1, label='A'):
         cutd = unary_union([LineString([q['p'] - q['t'] * q['w'] / 2, q['p'] + q['t'] * q['w'] / 2]).buffer(0.32, cap_style=2) for q in dl]) if dl else Polygon()
         for u0, u1 in X.spans(W['solid'].difference(cutd)):
             p = X.pt((u0 + u1) / 2); top = tops[fl](p); rr = rad(p)
-            facade = min(abs(rr - R_GF), abs(rr - R_L1), abs(rr - R_BR1)) < 0.35 or any(c for c in CORES.values() if c['stair_wall'].buffer(0.05).contains(Point(p)))
+            incore = [c for c in CORES.values() if c['fp'].buffer(0.05).contains(Point(p))]
+            facade = min(abs(rr - R_GF), abs(rr - R_L1), abs(rr - R_BR1), abs(rr - M.R_IR1), abs(rr - M.R_OR0), abs(rr - M.R_GAL)) < 0.35 or bool(incore)
+            if incore: top = core_top(incore[0]) if fl == ('L2' if incore[0]['to_l2'] else 'L1') else (FFL['L1'] - 0.6 if fl == 'GF' else FFL['L2'] - 0.6)
             if not facade: top = min(top, FFL[fl] + CEIL[fl] + 0.3)
             D.poly(box(u0, FFL[fl], u1, top), 'A-WALL', fill=CUT, edge=None, z=5)
         for u0, u1 in X.spans(cutd.intersection(W['solid'].buffer(0.05))):
@@ -127,19 +143,22 @@ def section(a, b, look_side=1, label='A'):
     for c in M.COLS:
         p = np.array(c['p']); off = float(np.dot(p - X.a, nrm)); u = X.u(p)
         if not (U0 < u < U1): continue
-        z0 = ground_z(p) if c['ring'] != 'A' else 0.9
-        top = c['top'] if c['ring'] != 'A' else funnel_top(R_BR0) - 0.28
-        if abs(off) < 0.25: D.poly(box(u - 0.175, z0, u + 0.175, top), 'A-COLS', fill=CUT, edge=None, z=5)
-        elif 0 < off < 14: D.poly(box(u - 0.175, z0, u + 0.175, top), 'A-ELEV', fill=None, edge=BEY, lw=0.09, z=2)
+        z0 = c['z0'] if c['z0'] is not None else ground_z(p)
+        top = c['top']; r_ = c['r']
+        if abs(off) < 0.25: D.poly(box(u - r_, z0, u + r_, top), 'A-COLS', fill=CUT, edge=None, z=5)
+        elif 0 < off < 14: D.poly(box(u - r_, z0, u + r_, top), 'A-ELEV', fill=None, edge=BEY, lw=0.09, z=2)
     # ---- mast (beyond or cut)
     u = X.u(C); D.poly(Polygon([(u - 0.42, 0.9), (u + 0.42, 0.9), (u + 0.1, SC.LV['mast']), (u - 0.1, SC.LV['mast'])]), 'A-ELEV', fill=GREYF, edge=INK, lw=0.18, z=3)
     D.circle((u, SC.LV['mast'] + 0.25), 0.25, 'A-ELEV', fill='white', edge=INK, lw=0.13)
     # ---- beyond: roof outer edge and L1 / L2 slab edges seen in the looking half (silhouettes)
-    for rr, zf, lw in ((R_ROOF, lambda b: SC.roof_h(b), 0.18), (R_ROOF, lambda b: SC.roof_h(b) - 0.12, 0.09), (R_L1, lambda b: 5.4, 0.13), (R_L1, lambda b: 4.8, 0.09)):
+    for rr, zf, lw in ((R_ROOF, lambda b: SC.roof_h(b), 0.18), (R_ROOF, lambda b: SC.roof_h(b) - 0.12, 0.09), (R_L1, lambda b: 5.4, 0.13), (R_L1, lambda b: 4.8, 0.09),
+                       (RG.T_MID[1], lambda b: SC.roof_h(b) + RG.STEP, 0.15), (RG.T_MID[1], lambda b: SC.roof_h(b) + RG.STEP - RG.MID_T, 0.09),
+                       (RG.R_FUN, lambda b: RG.fun_rim(b), 0.15), (RG.R_FUN, lambda b: RG.fun_rim(b) - RG.FUN_T, 0.09),
+                       (M.R_BG1, lambda b: 5.4, 0.1), (M.R_BG1, lambda b: 5.05, 0.07), (M.R_IR1, lambda b: 9.6, 0.1)):
         segs, cur = [], []
         for bb in np.arange(0, 360, 0.5):
             p = P(rr, bb); off = float(np.dot(p - X.a, nrm))
-            ok = off > 0.3 and (rr != R_L1 or not SC.L1_VOID.contains(Point(p))) and (rr != R_ROOF or not SC.RF_VOID.buffer(0.2).contains(Point(p)))
+            ok = off > 0.3 and (rr != R_ROOF or not SC.RF_VOID.buffer(0.2).contains(Point(p)))
             if ok: cur.append((X.u(p), zf(bb)))
             elif cur: segs.append(cur); cur = []
         if cur: segs.append(cur)
@@ -151,10 +170,11 @@ def section(a, b, look_side=1, label='A'):
         if 0.3 < off < 9.0: D.line([(X.u(p), 5.4), (X.u(p), top)], 'A-ELEV', lw=0.07, color=BEY, z=2)
     # ---- stairs cut by the line (S4 + cores), drawn as flights
     for k, c in list(CORES.items()):
-        if X.line.distance(Point(plans.frame(c['bc'], 0, (c['v_s0'] + c['v_s1']) / 2))) < c['W'] / 2:
+        if c['stair'] is not None and X.line.intersects(c['stair']):
             stair_flights(D, X, c)
-    if X.line.distance(Point(plans.frame(S4['bc'], 0, S4['v0'] + 3))) < S4['w'] / 2:
-        s4_flights(D, X)
+    for s_ in EXT.values():
+        if s_['kind'] == 'radial' and X.line.distance(Point(s_['f'](3.0, 0))) < s_['w'] / 2:
+            s4_flights(D, X, s_)
     # ---- entrance canopies: cover + ribs where the cut passes through, the far edge beam beyond
     for c in LS.CANOPIES:
         us = np.linspace(0, X.L, int(X.L / 0.1))
@@ -196,8 +216,7 @@ def section(a, b, look_side=1, label='A'):
     uc = X.u(C) if 0 < X.u(C) < X.L else None
     if uc is not None:
         D.line([(uc, -2.4), (uc, 0.9)], 'A-GRID', lw=0.07, color='#7A8590', ls='-.'); D.circle((uc, -2.9), 0.45, 'A-GRID', fill='white', edge='#7A8590', lw=0.13, z=7); D.text((uc, -2.9), 'C', 'A-GRID', size=1.6, color='#5B6570', z=8)
-    level_marks(D, X.L + 1.5, [(0, '±0.000 SITE'), (0.9, '+0.900 FFL GF'), (5.4, '+5.400 FFL L1'), (9.6, '+9.600 FFL L2'),
-                                (10.2, '+10.200 ROOF LOW'), (13.5, '+13.500 FUNNEL RIM'), (16.2, '+16.200 ROOF HIGH'), (30.0, '+30.000 MAST TOP')])
+    level_marks(D, X.L + 1.5, LEVELS)
     for u_ in (0.4, X.L - 0.4): pass
     return D, X
 
@@ -208,42 +227,75 @@ def wrapn(t, n):
         else: line = (line + ' ' + w).strip()
     out.append(line); return '\n'.join(out)
 
-def stair_flights(D, X, c):
-    """switchback core stair as seen in a cut along its axis: two flights per storey"""
-    u_in = X.u(plans.frame(c['bc'], 0, c['v_s0'] + c['sw'])); u_out = X.u(plans.frame(c['bc'], 0, c['v_s1'] - c['sw']))
-    sg = 1 if u_out > u_in else -1
-    floors = [('GF', 'L1', 26), ('L1', 'L2', 24)] if c['to_l2'] else [('GF', 'L1', 26)]
-    for f0, f1, n in floors:
-        z0, z1 = FFL[f0], FFL[f1]; h = (z1 - z0) / n; half = n // 2
-        g = (abs(u_out - u_in)) / (half - 1)
-        pts = [(u_in, z0)]
-        for i in range(half):                                 # first flight outwards (cut)
-            uu = u_in + sg * g * i; pts += [(uu, z0 + h * (i + 1)), (uu + sg * g, z0 + h * (i + 1))]
-        D.line(pts[:-1], 'A-STRS', lw=0.25, color=CUT, z=6)
-        zl = z0 + h * half
-        D.line([(u_out, zl), (u_out + sg * c['sw'], zl)], 'A-STRS', lw=0.35, color=CUT, z=6)
-        pts = []
-        for i in range(n - half):                             # return flight (beyond)
-            uu = u_out - sg * g * i; pts += [(uu, zl + h * (i + 1)), (uu - sg * g, zl + h * (i + 1))]
-        D.line([(u_out, zl)] + pts[:-1], 'A-STRS', lw=0.13, color=BEY, z=3)
-    # enclosure top
-    top = (FFL['L2'] if c['to_l2'] else FFL['L1']) + 3.3
-    for v in (c['v_s0'] - 0.2, c['v_s1'] + 0.2):
-        uu = X.u(plans.frame(c['bc'], 0, v)); D.poly(box(uu - 0.1, 0.9, uu + 0.1, top), 'A-WALL', fill=CUT, edge=None, z=5)
-    u0, u1 = sorted((X.u(plans.frame(c['bc'], 0, c['v_s0'] - 0.3)), X.u(plans.frame(c['bc'], 0, c['v_s1'] + 0.3))))
-    D.poly(box(u0, top, u1, top + 0.25), 'A-SLAB', fill=CUT, edge=None, z=5)
+LEVELS = [(0, '±0.000 SITE'), (0.9, '+0.900 FFL GF'), (5.4, '+5.400 FFL L1 · BRIDGE'), (9.6, '+9.600 FFL L2'),
+          (10.2, '+10.200 OUTER TIER LOW'), (12.0, '+12.000 MIDDLE TIER LOW'), (13.8, '+13.800 FUNNEL RIM LOW'), (16.2, '+16.200 OUTER TIER HIGH'),
+          (18.0, '+18.000 MIDDLE TIER HIGH'), (19.8, '+19.800 FUNNEL RIM HIGH'), (30.0, '+30.000 MAST TOP')]
 
-def s4_flights(D, X):
-    """external stair S4: L1 +5.400 down to the +0.900 garden terrace, 2 flights of 13 x 173, landing 2200"""
-    u0 = X.u(plans.frame(S4['bc'], 0, S4['v0'])); u1 = X.u(plans.frame(S4['bc'], 0, S4['v1']))
-    sg = 1 if u1 > u0 else -1; h = 4.5 / 26
-    pts = [(u0, 5.4)]; uu = u0; z = 5.4
-    for i in range(13): uu += sg * M.GO * (1 if i else 0); pts += [(uu, z), (uu, z - h)]; z -= h
-    uu += sg * S4['land']; pts.append((uu, z))
-    for i in range(13): pts += [(uu, z - h), (uu + sg * M.GO, z - h)]; uu += sg * M.GO; z -= h
+def _local(c, p):
+    """site point -> core local (u, v)"""
+    q = np.array(p) - C; return float(np.dot(q, c['t'])), float(np.dot(q, d(c['bc'])))
+def stair_z(c, run, u, outer):
+    """top of tread / landing at local u for flight A (court side) or B (outer side) of one storey"""
+    uA0, uA1, h, z0 = run['uA0'], run['uA1'], run['h'], run['z0']
+    zl = z0 + run['nA'] * h
+    if u >= uA1: return zl                                         # half landing
+    if u <= uA0: return run['z1'] if outer else z0                 # floor landings
+    if not outer: return z0 + h * (math.floor((u - uA0) / GO_) + 1)
+    return zl + h * (math.floor((uA1 - u) / GO_) + 1)
+GO_ = M.GO
+def stair_flights(D, X, c):
+    """tangential core stair cut across its width: each flight shows as a cut tread (or landing) at the height it has where
+    the section passes; the enclosure walls come from the plan walls"""
+    us = [u for u in np.linspace(0, X.L, int(X.L / 0.04)) if c['stair'].contains(Point(X.pt(u)))]
+    if not us: return
+    runs = M.core_runs(c); segs = {}
+    for ri, run in enumerate(runs):
+        zl = run['z0'] + run['nA'] * run['h']
+        for u in us:
+            lu, lv = _local(c, X.pt(u))
+            keys = []
+            if lu >= run['uA1']: keys.append(('mid', ri, zl))
+            elif lu <= run['uA0']:
+                keys.append(('floor', run['z0']))
+                if ri == len(runs) - 1: keys.append(('floor', run['z1']))
+            else:
+                if c['vi'] <= lv <= c['vi'] + c['sw']: keys.append(('A', ri, stair_z(c, run, lu, False)))
+                if c['vo'] - c['sw'] <= lv <= c['vo']: keys.append(('B', ri, stair_z(c, run, lu, True)))
+            for k in keys: segs.setdefault(k, []).append(u)
+    for k, uu in segs.items():
+        z = k[-1]; uu = sorted(uu); start = uu[0]; prev = uu[0]
+        for u in uu[1:] + [None]:
+            if u is None or u - prev > 0.1:
+                D.poly(box(start, z - 0.18, prev + 0.02, z), 'A-STRS', fill=CUT, edge=None, z=6)
+                if u is not None: start = u
+            if u is not None: prev = u
+    um = (us[0] + us[-1]) / 2
+    D.text((um, FFL['L1'] + 2.0), c['name'] + '\nSTAIR', 'A-ANNO', size=1.5, halo=True)
+    top = core_top(c)
+    u0, u1 = us[0] - 0.2, us[-1] + 0.2
+    D.poly(box(u0, top - 0.2, u1, top), 'A-SLAB', fill=CUT, edge=None, z=5)
+    if c.get('tank') is not None:
+        ut = [u for u in np.linspace(0, X.L, int(X.L / 0.04)) if c['tank'].contains(Point(X.pt(u)))]
+        if ut:
+            a_, b_ = ut[0], ut[-1]
+            D.poly(box(a_, c['tank_fl'] - 0.2, b_, c['tank_fl']), 'A-SLAB', fill=CUT, edge=None, z=5)
+            D.poly(box(a_, c['tank_top'] - 0.2, b_, c['tank_top']), 'A-SLAB', fill=CUT, edge=None, z=5)
+            for uu in (a_, b_): D.poly(box(uu - 0.1, c['tank_fl'], uu + 0.1, c['tank_top']), 'A-WALL', fill=CUT, edge=None, z=5)
+            D.poly(box(a_ + 0.4, c['tank_fl'] + 0.3, b_ - 0.4, c['tank_fl'] + 1.3), 'P-EQPT', fill='#D8ECF7', edge=CUT, lw=0.13, z=6)
+            D.text(((a_ + b_) / 2, c['tank_fl'] + 0.8), 'CW TANK', 'A-ANNO', size=1.2)
+
+def s4_flights(D, X, s_):
+    """external radial stair cut along its axis: flights + landing as a stepped profile"""
+    pts = []
+    for kind, u0, u1, z in s_['parts']:
+        a, b = X.u(s_['f'](u0, 0)), X.u(s_['f'](u1, 0))
+        pts += [(a, z), (b, z)]
+    first = X.u(s_['f'](0, 0)); pts = [(first, s_['z_top'])] + pts
+    last = X.u(s_['f'](s_['L'], 0)); pts.append((last, s_['z_bot']))
     D.line(pts, 'A-STRS', lw=0.3, color=CUT, z=6)
-    D.line([(u0, 5.4 - 0.35), (u0 + sg * (12 * M.GO + S4['land'] + 12 * M.GO), 0.9 - 0.35)], 'A-STRS', lw=0.2, color=CUT, z=6)
-    D.text(((u0 + u1) / 2, 4.6), 'STAIR 4 (EXTERNAL)\n26 R x 173, G 280', 'A-ANNO', size=1.6, halo=True)
+    D.line([(first, s_['z_top'] - 0.35), (last, s_['z_bot'] - 0.35 + 0.0)], 'A-STRS', lw=0.2, color=CUT, z=6)
+    nr = sum(n for k, n in s_['seq'] if k == 'flight')
+    D.text(((first + last) / 2, s_['z_top'] - 0.8), f"{s_['name']} (EXTERNAL)\n{nr} R x {int(round(s_['h'] * 1000))}, G 280", 'A-ANNO', size=1.6, halo=True)
 
 # ------------------------------------------------------------------------------------------------ elevations
 def elevation(view_b, label):
@@ -275,7 +327,6 @@ def elevation(view_b, label):
         items.append((dep, 'roof', q, b))
     for b in bs:
         b1 = b + 0.5; pm = P(R_L1, b + 0.25)
-        if SC.L1_VOID.contains(Point(pm)): continue
         dep = depth(pm)
         if dep < 0: continue
         p0, p1 = P(R_L1, b), P(R_L1, b1)
@@ -287,6 +338,17 @@ def elevation(view_b, label):
         pg = P(R_GF, b + 0.25)
         if SC.GF.buffer(0.2).contains(Point(pg)):
             items.append((dep - 3.6, 'gf', Polygon([(U(P(R_GF, b)), 0.9), (U(P(R_GF, b1)), 0.9), (U(P(R_GF, b1)), 4.8), (U(P(R_GF, b)), 4.8)]), b))
+    # the two upper tiers behind the outer roof: clerestory glass, then the tier fascia (front half only)
+    for b in bs:
+        b1 = b + 0.5
+        for Rf, lo, hi, kind in ((RG.T_MID[1], lambda bb: SC.roof_h(bb), lambda bb: SC.roof_h(bb) + RG.STEP - RG.MID_T, 'cler'),
+                                 (RG.T_MID[1], lambda bb: SC.roof_h(bb) + RG.STEP - RG.MID_T, lambda bb: SC.roof_h(bb) + RG.STEP, 'tier'),
+                                 (RG.R_FUN, lambda bb: SC.roof_h(bb) + RG.STEP, lambda bb: RG.fun_rim(bb) - RG.FUN_T, 'cler'),
+                                 (RG.R_FUN, lambda bb: RG.fun_rim(bb) - RG.FUN_T, lambda bb: RG.fun_rim(bb), 'tier')):
+            pm = P(Rf, b + 0.25); dep = depth(pm)
+            if Rf == RG.T_MID[1] and SC.RF_VOID.buffer(0.2).contains(Point(pm)): continue
+            p0, p1 = P(Rf, b), P(Rf, b1)
+            items.append((dep - 30, kind if dep >= 0 else kind + '_b', Polygon([(U(p0), lo(b)), (U(p1), lo(b1)), (U(p1), hi(b1)), (U(p0), hi(b))]).buffer(0.002), b))
     for c in LS.CANOPIES:
         for s_ in np.arange(c['R_in'], c['R_out'] - 1e-6, 0.75):
             s1 = min(c['R_out'], s_ + 0.75)
@@ -302,7 +364,7 @@ def elevation(view_b, label):
                              (U(LS.xy(c, s1, side)), LS.z_edge(c, s1)), (U(LS.xy(c, s_, side)), LS.z_edge(c, s_))])
                 items.append((depth(LS.xy(c, sm, side)) + 0.6, 'can_beam', q.buffer(0.005), 0))
     items.sort(key=lambda t: t[0])
-    colors = dict(roof=('#2B3036', None), veil=('#EEF1F3', None), l1=('#3A4048', None), l2=('#3A4048', None), gf=('#C9D3DA', None),
+    colors = dict(roof=('#2B3036', None), veil=('#EEF1F3', None), l1=('#3A4048', None), l2=('#3A4048', None), gf=('#C9D3DA', None), cler=('#BFD9E6', None), tier=('#3A4048', None), cler_b=('#D6E6EE', None), tier_b=('#6B727B', None),
                   can_solid=('#CDBB93', None), can_glass=('#E3ECEF', None), can_beam=('#9C845A', None))
     for dep, kind, q, b in items:
         fc = colors[kind][0]
@@ -327,8 +389,7 @@ def elevation(view_b, label):
     D.poly(box(-(R_GF + 1.5), 0, R_GF + 1.5, 0.9), 'A-ELEV', fill='#DCD8CF', edge=INK, lw=0.13, z=1.5)
     # people for scale
     for u_ in (-18, -6, 9, 21): man(D, u_, 0.9 if abs(u_) < R_GF else 0.0, color='#596069')
-    level_marks(D, 31.5, [(0, '±0.000 SITE'), (0.9, '+0.900 FFL GF'), (5.4, '+5.400 FFL L1'), (9.6, '+9.600 FFL L2'),
-                          (10.2, '+10.200 ROOF LOW'), (13.5, '+13.500 FUNNEL RIM'), (16.2, '+16.200 ROOF HIGH'), (30.0, '+30.000 MAST')])
+    level_marks(D, 31.5, LEVELS)
     return D
 
 def section_set():
