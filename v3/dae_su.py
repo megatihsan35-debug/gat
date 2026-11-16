@@ -36,14 +36,16 @@ def tex_mean(t):
     w = a[..., 3:] / 255.0; c = (a[..., :3] * w).sum((0, 1)) / max(w.sum(), 1)
     return [float(x) / 255 for x in c]
 
-def export(groups, lib, inst, path, textured, texdir='textures'):
+def export(groups, lib, inst, path, textured, texdir='textures', bands=None):
+    """bands: optional [(group name, {material: mesh}, [(component, matrix)])] -> one top group per band (exploded model)"""
     NS = 'http://www.collada.org/2005/11/COLLADASchema'
     root = ET.Element('COLLADA', xmlns=NS, version='1.4.1')
     asset = ET.SubElement(root, 'asset')
     ET.SubElement(ET.SubElement(asset, 'contributor'), 'authoring_tool').text = 'Titik Temu model builder'
     ET.SubElement(asset, 'unit', name='meter', meter='1')
     ET.SubElement(asset, 'up_axis').text = 'Z_UP'
-    used = sorted(set(groups) | {k for parts in lib.values() for _, k in parts})
+    allg = set(groups or {}) | {k for _, d, _ in (bands or []) for k in d}
+    used = sorted(allg | {k for parts in lib.values() for _, k in parts})
     texs = sorted({R.MATS[k]['tex'] for k in used if R.MATS[k]['tex']}) if textured else []
     if texs:
         limg = ET.SubElement(root, 'library_images')
@@ -133,6 +135,26 @@ def export(groups, lib, inst, path, textured, texdir='textures'):
     TAG = lambda k: ('SITE' if k in ('Grass', 'Paving', 'Paving-Dark', 'Asphalt', 'Road-Marking', 'Kerb', 'Plinth', 'Water', 'Concrete') else
                      'LANDSCAPE' if k in ('Shrub', 'Soil', 'Rubber-Play', 'Anyaman') else
                      'INTERIOR' if k.startswith(('Screen-', 'Backwall-', 'State-', 'River-', 'Tactile', 'Stall', 'Gallery', 'Solid-Surface')) else 'BUILDING')
+    cat = lambda c: 'PEOPLE' if c.startswith('person') else 'TREES' if c.startswith('tree') else 'CARS' if c.startswith('car') else 'FURNITURE'
+    def place(parent, items, pre):
+        cats = {}
+        for cname, T in items: cats.setdefault(cat(cname), []).append((cname, T))
+        for cg in ('TREES', 'CARS', 'PEOPLE', 'FURNITURE'):
+            if cg not in cats: continue
+            el = ET.SubElement(parent, 'node', id=f'grp_{pre}{cg}', name=cg)
+            for cname, T in cats[cg]:
+                T = np.asarray(T, float)
+                c = ET.SubElement(el, 'node', id=f'n{nn[0]}_i', name=cname.replace('_', ' ')); nn[0] += 1
+                ET.SubElement(c, 'matrix').text = fmt(T.ravel(), 6)
+                ET.SubElement(c, 'instance_node', url=f'#def_{sid(cname)}')
+    if bands:
+        for bi, (bname, d, items) in enumerate(bands):
+            el = ET.SubElement(top, 'node', id=f'band{bi}', name=bname)
+            for k, m in d.items(): gnode(el, k, m, k)
+            place(el, items, f'b{bi}_')
+        ET.SubElement(ET.SubElement(root, 'scene'), 'instance_visual_scene', url='#scene')
+        ET.ElementTree(root).write(path, xml_declaration=True, encoding='utf-8')
+        return gc[0], ntri[0], texs
     tags = {}
     for k in groups: tags.setdefault(TAG(k), []).append(k)
     for tg in ('SITE', 'LANDSCAPE', 'BUILDING', 'INTERIOR'):

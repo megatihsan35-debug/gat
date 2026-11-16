@@ -21,9 +21,9 @@ VIEWS = {
     'dusk':   dict(cam=P(58, 228, 9.0), tgt=P(4, 210, 8.0), lens=30, sun=(285, 2.5), res=(1920, 1080), ev=0.9, dusk=True),
 }
 
-def setup_scene():
+def setup_scene(glb=None, context=True):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=os.path.join(OUT, 'titik-temu-render.glb'), merge_vertices=False)
+    bpy.ops.import_scene.gltf(filepath=glb or os.path.join(OUT, 'titik-temu-render.glb'), merge_vertices=False)
     sc = bpy.context.scene
     # ---- materials
     for m in bpy.data.materials:
@@ -59,6 +59,7 @@ def setup_scene():
             if not leafy:
                 try: o.data.set_sharp_from_angle(angle=math.radians(32))
                 except Exception: pass
+    if not context: return sc
     # ---- context: big ground plane + road continuations + a ring of trees (render only, not in the SketchUp file)
     bpy.ops.mesh.primitive_plane_add(size=1400, location=(C[0], C[1], -0.36))
     g = bpy.context.active_object; g.name = 'CTX-GROUND'
