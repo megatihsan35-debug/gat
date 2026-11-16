@@ -63,9 +63,10 @@ def main(pct=100, spp=96, preview=False):
         cy.use_denoising = True; cy.max_bounces = 6; cy.diffuse_bounces = 3; cy.glossy_bounces = 2; cy.transmission_bounces = 6; cy.transparent_max_bounces = 10
         cy.caustics_reflective = False; cy.caustics_refractive = False; cy.sample_clamp_indirect = 6
         sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'AgX - Medium High Contrast'; sc.view_settings.exposure = 0.25
-    sc.render.film_transparent = False
-    sc.render.image_settings.file_format = 'PNG'
-    sc.render.filepath = os.path.join(ED, 'exploded_preview.png' if preview else 'exploded_raw.png')
+    TR = os.environ.get('EXPLODE_TRANSPARENT') == '1'
+    sc.render.film_transparent = TR
+    sc.render.image_settings.file_format = 'PNG'; sc.render.image_settings.color_mode = 'RGBA' if TR else 'RGB'
+    sc.render.filepath = os.path.join(ED, 'exploded_preview.png' if preview else ('exploded_alpha.png' if TR else 'exploded_raw.png'))
     bpy.ops.render.render(write_still=True); print('RENDERED', sc.render.filepath, flush=True)
 
 if __name__ == '__main__':
