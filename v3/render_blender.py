@@ -13,9 +13,9 @@ def P(r, b, z=0.0): return (C[0] + r * math.sin(math.radians(b)), C[1] + r * mat
 # view: camera, target, lens (mm), sun azimuth / elevation (deg), aspect
 VIEWS = {
     'hero':   dict(cam=P(70, 150, 22), tgt=P(3, 170, 8.5), lens=34, sun=(70, 34), res=(1920, 1080), ev=0.1),
-    'gate':   dict(cam=P(41, 186.5, 1.55), tgt=P(9, 181, 6.2), lens=22, sun=(105, 42), res=(1920, 1080), ev=0.35),
-    'court':  dict(cam=P(8.6, 214, 2.45), tgt=P(5, 30, 8.8), lens=15, sun=(95, 62), res=(1920, 1080), ev=0.45),
-    'arcade': dict(cam=P(9.85, 131, 2.35), tgt=P(13.0, 156, 2.9), lens=20, sun=(95, 55), res=(1920, 1080), ev=0.35),
+    'gate':   dict(cam=P(41, 186.5, 1.55), tgt=P(9, 181, 6.2), lens=22, sun=(105, 42), res=(1920, 1080), ev=0.35, interior=True),
+    'court':  dict(cam=P(8.6, 214, 2.45), tgt=P(5, 30, 8.8), lens=15, sun=(95, 62), res=(1920, 1080), ev=0.45, interior=True),
+    'arcade': dict(cam=P(9.9, 127, 1.95), tgt=P(13.4, 152, 3.0), lens=22, sun=(95, 55), res=(1920, 1080), ev=0.0, interior=True),
     'bridge': dict(cam=P(18.5, 206, 7.0), tgt=P(18.4, 248, 6.8), lens=17, sun=(250, 35), res=(1920, 1080), ev=0.5),
     'aerial_nw': dict(cam=P(85, 318, 52), tgt=P(0, 0, 4), lens=38, sun=(250, 32), res=(1920, 1080), ev=0.1),
     'dusk':   dict(cam=P(58, 228, 9.0), tgt=P(4, 210, 8.0), lens=30, sun=(285, 2.5), res=(1920, 1080), ev=0.9, dusk=True),
@@ -43,18 +43,22 @@ def setup_scene():
             setv('Subsurface Weight', 0.15) if 'Subsurface Weight' in bsdf.inputs else None
             setv('Roughness', 0.75)
         if nm in ('Roof-Panel',): setv('Roughness', 0.28); setv('Metallic', 0.15)
+        if nm in ('Bronze-Anodised',): setv('Metallic', 0.15); setv('Roughness', 0.5)
+        if nm in ('Solid-Surface',): setv('Base Color', (0.82, 0.8, 0.77, 1)); setv('Roughness', 0.45)
         if nm.startswith(('Screen-', 'Tenun-Lining')):             # backlit state screens + tenun lining lit from above
             tex = next((n for n in m.node_tree.nodes if n.type == 'TEX_IMAGE'), None)
             if tex: m.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Emission Color'])
             setv('Emission Strength', 1.4 if nm.startswith('Screen-') else 0.35)
     # ---- smooth shading on curved, faceted architecture (by angle)
+    done = set()
     for o in bpy.data.objects:
-        if o.type == 'MESH':
+        if o.type == 'MESH' and o.data.name not in done:
+            done.add(o.data.name)
             for p in o.data.polygons: p.use_smooth = True
-            try:
-                o.data.set_sharp_from_angle(angle=math.radians(32))
-            except Exception:
-                pass
+            leafy = any(ms and ms.name.startswith(('Leaves', 'Shrub', 'Skin', 'Cloth', 'Hair')) for ms in o.data.materials)
+            if not leafy:
+                try: o.data.set_sharp_from_angle(angle=math.radians(32))
+                except Exception: pass
     # ---- context: big ground plane + road continuations + a ring of trees (render only, not in the SketchUp file)
     bpy.ops.mesh.primitive_plane_add(size=1400, location=(C[0], C[1], -0.36))
     g = bpy.context.active_object; g.name = 'CTX-GROUND'
@@ -64,9 +68,11 @@ def setup_scene():
     mg.node_tree.links.new(tc.outputs['UV'], mp.inputs['Vector']); mg.node_tree.links.new(mp.outputs['Vector'], tex.inputs['Vector']); mg.node_tree.links.new(tex.outputs['Color'], b.inputs['Base Color'])
     b.inputs['Roughness'].default_value = 0.95; g.data.materials.append(mg)
     asph = bpy.data.materials.get('Asphalt')
-    for (a, c, w) in (((112.9, -15.9), (0.0, 0.0), 12.0), ((100.7, 64.7), (112.2, 0.1), 10.0)):
+    # the two roads continue AWAY from the junction at the south-east corner (Jalan Tok Muda Awang Ngah west, Jalan Ibrahim north)
+    for (a, c, w) in (((112.9, -15.9), (-250.0, 35.0), 12.0), ((115.0, -15.6), (52.4, 334.7), 10.0)):
         a, c = Vector((a[0], a[1], 0)), Vector((c[0], c[1], 0)); t = (c - a).normalized(); n = Vector((t.y, -t.x, 0))
-        cen = (a + c) / 2 + n * (w / 2 + 0.25); Lr = (c - a).length + 260
+        side = 1 if (Vector((C[0], C[1], 0)) - a).dot(n) < 0 else -1
+        cen = (a + c) / 2 + n * side * (w / 2 + 0.25); Lr = (c - a).length
         bpy.ops.mesh.primitive_plane_add(size=1, location=(cen.x, cen.y, -0.17)); r = bpy.context.active_object; r.name = 'CTX-ROAD'
         r.scale = (w, Lr, 1); r.rotation_euler = (0, 0, math.atan2(-t.x, t.y))
         if asph: r.data.materials.append(asph)
@@ -89,21 +95,31 @@ def setup_scene():
             s_ = (x - ax) * tx + (y - ay) * ty; nx, ny = x - ax - tx * s_, y - ay - ty * s_
             best = min(best, math.hypot(nx, ny))
         return best
+    bpy.context.view_layer.update()
+    REF = {}
+    for o in bpy.data.objects:
+        if o.type == 'MESH' and o.data and o.data.name not in REF and not o.name.startswith('CTX'): REF[o.data.name] = o.matrix_world.copy()
     n = 0; keys = list(groups)
-    while n < 260:
+    while n < 520:
         x, y = C[0] + random.uniform(-320, 320), C[1] + random.uniform(-320, 320)
         if inside(x, y) or droad(x, y) < 11: continue
         dmin = min(math.hypot(x - px, y - py) for px, py in site_pts)
         if dmin < 9 or math.hypot(x - C[0], y - C[1]) < 50: continue
         k = keys[n % len(keys)]; rot = random.uniform(0, 6.28); sc_ = random.uniform(0.8, 1.25)
+        from mathutils import Matrix
         for me in groups[k]:
+            ref = REF.get(me.name)
+            if ref is None: continue
             o = bpy.data.objects.new(f'CTX-TREE-{n}-{me.name}', me); sc.collection.objects.link(o)
-            o.location = (x, y, -0.35); o.rotation_euler = (0, 0, rot); o.scale = (sc_, sc_, sc_)
+            # the importer keeps the glTF axis turn in the object matrix, so copy the rotation of an imported instance
+            R0 = ref.to_3x3().normalized().to_4x4()
+            o.matrix_world = Matrix.Translation((x, y, -0.35)) @ Matrix.Rotation(rot, 4, 'Z') @ R0 @ Matrix.Scale(sc_, 4)
         n += 1
     return sc
 
 def interior_lights(sc, mult=1.0):
     for i, (x, y, z, su, sv, w, col, hd) in enumerate(json.load(open(os.path.join(OUT, 'lights.json')))):
+        if su in (1.2,) and sv in (0.6,): w = w * 0.45                # shop downlights: softer so the white counters do not burn out
         ld = bpy.data.lights.new(f'IL{i}', 'AREA'); ld.shape = 'RECTANGLE'; ld.size = su; ld.size_y = sv; ld.energy = w * mult; ld.color = col
         o = bpy.data.objects.new(f'IL{i}', ld); sc.collection.objects.link(o); o.location = (x, y, z); o.rotation_euler = (0, 0, -math.radians(hd))
 
@@ -128,6 +144,10 @@ def camera(sc, v):
 
 def render(view, pct=100, samples=128):
     sc = setup_scene(); v = VIEWS[view]
+    # keep people out of the first metres in front of the lens (they read as giants in a wide-angle frame)
+    cam = Vector(v['cam']); near = v.get('clear', 4.5 if v.get('interior') else 3.0)
+    for o in bpy.data.objects:
+        if '_person_' in o.name and (o.matrix_world.translation - cam).length < near: o.hide_render = True
     lights(sc, *v['sun']); camera(sc, v); interior_lights(sc, 1.6 if v.get('dusk') else 1.0)
     if v.get('dusk'):
         sc.world.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.06
@@ -140,6 +160,17 @@ def render(view, pct=100, samples=128):
     sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'AgX - Medium High Contrast'; sc.view_settings.exposure = v.get('ev', 0.15)
     sc.render.film_transparent = False
     sc.render.image_settings.file_format = 'PNG'; sc.render.filepath = os.path.join(IMG, f'{view}.png')
+    # atmospheric haze by distance (mist pass) + a soft glow, in the compositor
+    sc.view_layers[0].use_pass_mist = True
+    ms = sc.world.mist_settings; ms.start = 45 if not v.get('dusk') else 35; ms.depth = 420; ms.falloff = 'QUADRATIC'
+    sc.use_nodes = True; nt = sc.node_tree
+    for n_ in list(nt.nodes): nt.nodes.remove(n_)
+    rl = nt.nodes.new('CompositorNodeRLayers'); mx = nt.nodes.new('CompositorNodeMixRGB'); cp = nt.nodes.new('CompositorNodeComposite')
+    mt = nt.nodes.new('CompositorNodeMath'); mt.operation = 'MULTIPLY'; mt.inputs[1].default_value = 0.0 if v.get('interior') else (0.45 if not v.get('dusk') else 0.35)
+    mx.inputs[2].default_value = (0.80, 0.85, 0.9, 1) if not v.get('dusk') else (0.55, 0.42, 0.42, 1)
+    gl = nt.nodes.new('CompositorNodeGlare'); gl.glare_type = 'FOG_GLOW'; gl.quality = 'MEDIUM'; gl.mix = -0.9 if not v.get('dusk') else -0.75; gl.threshold = 1.2
+    nt.links.new(rl.outputs['Mist'], mt.inputs[0]); nt.links.new(mt.outputs[0], mx.inputs[0])
+    nt.links.new(rl.outputs['Image'], mx.inputs[1]); nt.links.new(mx.outputs[0], gl.inputs[0]); nt.links.new(gl.outputs[0], cp.inputs[0])
     t = time.time(); bpy.ops.render.render(write_still=True); print('RENDERED', view, round(time.time() - t), 's', flush=True)
 
 if __name__ == '__main__':

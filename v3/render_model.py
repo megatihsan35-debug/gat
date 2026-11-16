@@ -151,17 +151,23 @@ def person(kind, skin, top, bottom, H=1.68, walk=0.0, tudung=None, arms_swing=0.
         parts.append(_m(hair, 'Hair'))
     return parts
 
-def comp_tree(scale=1.0, mat='Leaves', seed=0, n=9):
+def comp_tree(scale=1.0, mat='Leaves', seed=0, n=28, crown=(3.2, 1.5), zc=6.2):
+    """umbrella crown (rain tree style): tapered trunk, a few limbs and many small leaf clusters, so the crown reads soft"""
     r = np.random.default_rng(seed); s = scale; parts = []
-    trunk = trimesh.creation.cone(radius=0.32 * s, height=4.2 * s, sections=10); parts.append(_m(trunk, 'Bark'))
+    tr = trimesh.creation.cylinder(radius=0.3 * s, height=4.4 * s, sections=12); tr.apply_translation((0, 0, 2.2 * s))
+    v = tr.vertices; k = np.clip(v[:, 2] / (4.4 * s), 0, 1); v[:, :2] *= (1 - 0.45 * k)[:, None]; tr.vertices = v
+    parts.append(_m(tr, 'Bark'))
     blobs = []
-    for i in range(n):
-        a = i * 2 * math.pi / n + r.uniform(-0.3, 0.3); rr = r.uniform(1.4, 2.9) * s
-        top = (rr * math.cos(a), rr * math.sin(a), r.uniform(5.2, 6.6) * s)
-        parts.append(_m(rod((0, 0, 3.0 * s), top, 0.09 * s, 6), 'Bark'))
-        e = ellipsoid(top, (r.uniform(1.5, 2.2) * s, r.uniform(1.5, 2.2) * s, r.uniform(0.9, 1.3) * s), 2)
-        e.vertices += r.normal(0, 0.09 * s, e.vertices.shape); blobs.append(e)
-    e = ellipsoid((0, 0, 6.9 * s), (2.2 * s, 2.2 * s, 1.2 * s), 2); e.vertices += r.normal(0, 0.1 * s, e.vertices.shape); blobs.append(e)
+    for i in range(6):                                                    # limbs end inside a leaf cluster
+        a = i * math.pi / 3 + r.uniform(-0.25, 0.25); rr = r.uniform(1.4, 2.3) * s; tip = (rr * math.cos(a), rr * math.sin(a), (zc - 0.3) * s)
+        parts.append(_m(rod((0, 0, 3.6 * s), tip, 0.11 * s, 6), 'Bark'))
+        rad = r.uniform(0.95, 1.3) * s; e = ellipsoid((tip[0], tip[1], tip[2] + 0.3 * s), (rad, rad, rad * 0.75), 2); e.vertices += r.normal(0, 0.05 * s, e.vertices.shape); blobs.append(e)
+    for i in range(n - 6):
+        u = r.uniform(0, 2 * math.pi); t = math.sqrt(r.uniform(0.15, 1.0))
+        x, y = crown[0] * s * t * math.cos(u), crown[0] * s * t * math.sin(u)
+        z = zc * s + crown[1] * s * (1 - t * t) * r.uniform(0.4, 1.0) - 0.3 * s
+        rad = r.uniform(0.75, 1.25) * s
+        e = ellipsoid((x, y, z), (rad, rad, rad * 0.72), 2); e.vertices += r.normal(0, 0.05 * s, e.vertices.shape); blobs.append(e)
     parts.append(_m(trimesh.util.concatenate(blobs), mat))
     return parts
 
@@ -174,7 +180,7 @@ def comp_car(body):
 
 def library():
     L = {'chair': comp_chair(), 'chair_office': comp_chair_office(), 'stool_bar': comp_stool_bar(), 'stool_low': comp_stool_low(), 'table_cafe': comp_table_cafe(),
-         'jar': comp_jar(), 'pack': comp_pack(), 'tree_rain': comp_tree(1.0, 'Leaves', 1), 'tree_rain2': comp_tree(0.85, 'Leaves', 5, 8), 'tree_pink': comp_tree(0.62, 'Leaves-Pink', 3, 7),
+         'jar': comp_jar(), 'pack': comp_pack(), 'tree_rain': comp_tree(1.0, 'Leaves', 1), 'tree_rain2': comp_tree(0.85, 'Leaves', 5, 24), 'tree_pink': comp_tree(0.62, 'Leaves-Pink', 3, 20, (2.6, 1.6), 6.6),
          'car_white': comp_car('Car-White'), 'car_grey': comp_car('Car-Grey'), 'car_red': comp_car('Car-Red')}
     P_ = [('m', 0, 'Cloth-0', 'Cloth-1', 1.72, 0.9, None, 0.8), ('m', 1, 'Cloth-2', 'Cloth-11', 1.68, 0.0, None, 0.1), ('f', 2, 'Cloth-4', 'Cloth-4', 1.6, 0.6, 'Cloth-11', 0.5),
           ('f', 0, 'Cloth-3', 'Cloth-3', 1.62, 0.0, 'Cloth-5', 0.0), ('f', 1, 'Cloth-0', 'Cloth-1', 1.58, 0.7, 'Cloth-7', 0.6), ('m', 3, 'Cloth-8', 'Cloth-7', 1.75, 0.8, None, 0.7),
