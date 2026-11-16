@@ -360,7 +360,7 @@ def write_dae(groups, lib, inst, path, texdir_rel='textures'):
     """compact COLLADA 1.4: shared positions, separate TEXCOORD index stream, components as library_nodes + instance_node"""
     used_mats = set(groups) | {k for parts in lib.values() for _, k in parts}
     X = ['<?xml version="1.0" encoding="utf-8"?>', '<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">',
-         '<asset><contributor><authoring_tool>Titik Temu render_model.py</authoring_tool></contributor><unit name="meter" meter="1"/><up_axis>Z_UP</up_axis></asset>']
+         '<asset><contributor><authoring_tool>Titik Temu render_model.py</authoring_tool></contributor><created>2026-11-16T00:00:00Z</created><modified>2026-11-16T00:00:00Z</modified><unit name="meter" meter="1"/><up_axis>Z_UP</up_axis></asset>']
     X.append('<library_images>')
     texs = sorted({MATS[k]['tex'] for k in used_mats if MATS[k]['tex']})
     for t in texs: X.append(f'<image id="img_{t.split(".")[0]}"><init_from>{texdir_rel}/{t}</init_from></image>')
