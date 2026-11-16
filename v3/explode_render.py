@@ -9,7 +9,7 @@ from bpy_extras.object_utils import world_to_camera_view
 
 ED = os.path.join(RB.OUT, 'explode')
 AZ, EL = 150.0, 36.0                  # view from the south-east (bearing 150°), 30° down - same side as the hero render
-RES = (2400, 1600)
+RES = (2400, 1800)
 
 def main(pct=100, spp=96, preview=False):
     sc = RB.setup_scene(os.path.join(ED, 'titik-temu-exploded.glb'), context=False)

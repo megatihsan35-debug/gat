@@ -31,7 +31,8 @@ def main():
             d.line([(lx, ty + 22 * s), (ax - 8 * s, ty + 22 * s), (ax - 8 * s, ay)], fill=(150, 154, 160), width=max(1, int(2 * s)))
             d.ellipse([ax - 14 * s, ay - 6 * s, ax - 2 * s, ay + 6 * s], fill=acc)
         d.line([(x0, ty + 82 * s), (x0 + 120 * s, ty + 82 * s)], fill=acc, width=max(1, int(3 * s)))
-    d.text((x0, H - 70 * s), 'SITE ±0.000 WITH GROUND FLOOR ON THE +0.900 PLINTH  ·  FLOORS LIFTED 16 / 34 / 50 M FOR CLARITY  ·  VIEW FROM THE SOUTH-EAST',
+    off = json.load(open(os.path.join(ED, 'explode.json')))['off']
+    d.text((x0, H - 70 * s), ('SITE ±0.000 WITH GROUND FLOOR ON THE +0.900 PLINTH  ·  FLOORS LIFTED {} M FOR CLARITY  ·  VIEW FROM THE SOUTH-EAST').format(' / '.join(str(int(off[b])) for b in ('L1', 'L2', 'ROOF'))),
            font=fs, fill=grey)
     out = os.path.join(ED, 'TITIK-TEMU_EXPLODED-AXO.png'); im.save(out); print(out, im.size)
 if __name__ == '__main__': main()
