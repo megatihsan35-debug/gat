@@ -88,11 +88,13 @@ def rod(p0, p1, r, n=8):
     return trimesh.creation.cylinder(radius=r, segment=[p0, p1], sections=n)
 def capsule(p0, p1, r, n=10):
     p0, p1 = np.array(p0, float), np.array(p1, float); L_ = np.linalg.norm(p1 - p0)
+    if _LOW: n = 6
     m = trimesh.creation.capsule(height=max(L_, 1e-3), radius=r, count=[n, n // 2 + 2])
     z = np.array([0, 0, 1.0]); v = (p1 - p0) / max(L_, 1e-9)
     R = trimesh.geometry.align_vectors(z, v); m.apply_transform(R); m.apply_translation((p0 + p1) / 2); return m
+_LOW = False
 def ellipsoid(c, s, sub=2):
-    m = trimesh.creation.icosphere(subdivisions=sub, radius=1.0); m.apply_scale(s); m.apply_translation(c); return m
+    m = trimesh.creation.icosphere(subdivisions=min(sub, 1) if _LOW else sub, radius=1.0); m.apply_scale(s); m.apply_translation(c); return m
 def rotz(th):
     c, s = math.cos(th), math.sin(th); T = np.eye(4); T[:2, :2] = [[c, -s], [s, c]]; return T
 def place(p, z, h=(0, 1), scale=1.0):
@@ -178,7 +180,8 @@ def comp_car(body):
             w = trimesh.creation.cylinder(radius=0.33, height=0.22, sections=14); w.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 2, (0, 1, 0))); w.apply_translation((x, y, 0.33)); p.append(_m(w, 'Tyre'))
     return p
 
-def library():
+def library(low=False):
+    global _LOW; _LOW = low
     L = {'chair': comp_chair(), 'chair_office': comp_chair_office(), 'stool_bar': comp_stool_bar(), 'stool_low': comp_stool_low(), 'table_cafe': comp_table_cafe(),
          'jar': comp_jar(), 'pack': comp_pack(), 'tree_rain': comp_tree(1.0, 'Leaves', 1), 'tree_rain2': comp_tree(0.85, 'Leaves', 5, 24), 'tree_pink': comp_tree(0.62, 'Leaves-Pink', 3, 20, (2.6, 1.6), 6.6),
          'car_white': comp_car('Car-White'), 'car_grey': comp_car('Car-Grey'), 'car_red': comp_car('Car-Red')}
@@ -418,6 +421,59 @@ def write_dae(groups, lib, inst, path, texdir_rel='textures'):
     open(path, 'w').write('\n'.join(X))
     return len(texs)
 
+# ------------------------------------------------------------------------------------------------ DAE via pycollada (same writer family as model3d's .dae, which SketchUp opens)
+def write_dae_pc(groups, lib, inst, path, texdir_rel='textures'):
+    """flattened (no instance_node), normals + per-corner UVs, one node per material, rounded floats so the file stays small"""
+    import collada
+    from collada import asset, material, source, geometry, scene as cscene
+    flat = {k: [m] for k, m in groups.items()}
+    for cname, T in inst:
+        for pm, key in lib[cname]:
+            mm = pm.copy(); mm.apply_transform(T); flat.setdefault(key, []).append(mm)
+    D = collada.Collada()
+    D.assetInfo.unitname = 'meter'; D.assetInfo.unitmeter = 1.0; D.assetInfo.upaxis = asset.UP_AXIS.Z_UP
+    imgs = {}; nodes = []
+    for key, ms in flat.items():
+        m = trimesh.util.concatenate(ms); md = MATS[key]; h = md['color'].lstrip('#'); rgb = tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        if md['tex']:
+            t = md['tex']
+            if t not in imgs:
+                im = material.CImage(f'img-{t.split(".")[0]}', f'{texdir_rel}/{t}'); D.images.append(im); imgs[t] = im
+            surf = material.Surface(f'{key}-surface', imgs[t]); samp = material.Sampler2D(f'{key}-sampler', surf); mp = material.Map(samp, 'UVSET0')
+            eff = material.Effect(f'{key}-effect', [surf, samp], 'lambert', diffuse=mp, double_sided=True,
+                                  transparency=md['alpha'] if md['alpha'] < 1 else None, transparent=(1.0, 1.0, 1.0, 1.0) if md['alpha'] < 1 else None)
+        else:
+            eff = material.Effect(f'{key}-effect', [], 'lambert', diffuse=rgb + (1.0,), double_sided=True,
+                                  transparency=md['alpha'] if md['alpha'] < 1 else None, transparent=(1.0, 1.0, 1.0, 1.0) if md['alpha'] < 1 else None)
+        mat = material.Material(f'{key}-material', key, eff); D.effects.append(eff); D.materials.append(mat)
+        # shared vertices, one index for every input. Textured meshes are split by the face's box-projection axis first, so the
+        # per-vertex UVs are exact (no stretched seams) and vertices are still shared inside each part
+        if md['tex']:
+            ax = np.argmax(np.abs(m.face_normals), axis=1); parts_ = [m.submesh([np.where(ax == a)[0]], append=True) for a in range(3) if (ax == a).any()]
+        else:
+            parts_ = [m]
+        Vs, Ns, UVs, Fs, off = [], [], [], [], 0
+        tu, tv = (md['tile'], md['tile']) if not isinstance(md['tile'], (tuple, list)) else md['tile']
+        for q in parts_:
+            q = q.copy(); q.merge_vertices(digits_vertex=3); v = q.vertices
+            Vs.append(v); Ns.append(q.vertex_normals); Fs.append(q.faces + off); off += len(v)
+            if md['tex']:
+                a_ = int(np.argmax(np.abs(q.face_normals[0])))
+                uv = v[:, [0, 1]] if a_ == 2 else v[:, [1, 2]] if a_ == 0 else v[:, [0, 2]]
+                UVs.append(uv / np.array([tu, tv]))
+        V = np.round(np.vstack(Vs), 3); N = np.round(np.vstack(Ns), 2); Fi = np.vstack(Fs).astype(np.int32)
+        srcs = [source.FloatSource(f'{key}-verts', V.ravel(), ('X', 'Y', 'Z')), source.FloatSource(f'{key}-normals', N.ravel(), ('X', 'Y', 'Z'))]
+        il = source.InputList(); il.addInput(0, 'VERTEX', f'#{key}-verts'); il.addInput(0, 'NORMAL', f'#{key}-normals')
+        if md['tex']:
+            UV = np.round(np.vstack(UVs), 3); srcs.append(source.FloatSource(f'{key}-uv', UV.ravel(), ('S', 'T'))); il.addInput(0, 'TEXCOORD', f'#{key}-uv', set='0')
+        g = geometry.Geometry(D, f'{key}-geom', key, srcs)
+        tri = g.createTriangleSet(Fi.ravel(), il, f'{key}-mat'); g.primitives.append(tri); D.geometries.append(g)
+        mn = cscene.MaterialNode(f'{key}-mat', mat, inputs=[('UVSET0', 'TEXCOORD', '0')] if md['tex'] else [])
+        nodes.append(cscene.Node(key, children=[cscene.GeometryNode(g, [mn])]))
+    sc = cscene.Scene('titik-temu', nodes); D.scenes.append(sc); D.scene = sc
+    D.write(path)
+    return sum(len(trimesh.util.concatenate(v).faces) for v in flat.values())
+
 if __name__ == '__main__':
     import sys, time
     t0 = time.time()
@@ -428,9 +484,9 @@ if __name__ == '__main__':
         export_glb(g, lib, inst, os.path.join(OUT, 'titik-temu-render.glb')); print('glb', os.path.getsize(os.path.join(OUT, 'titik-temu-render.glb')) // 1e6, 'MB')
         json.dump([(c, T.tolist()) for c, T in inst], open(os.path.join(OUT, 'instances.json'), 'w'))
     if 'dae' in sys.argv or len(sys.argv) == 1:
-        g, lib, inst = build(coarse=True)
+        g, lib, inst = build(coarse=True); lib = library(low=True)
         dd = os.path.join(OUT, 'dae'); os.makedirs(os.path.join(dd, 'textures'), exist_ok=True)
-        n = write_dae(g, lib, inst, os.path.join(dd, 'titik-temu.dae'))
+        n = write_dae_pc(g, lib, inst, os.path.join(dd, 'titik-temu.dae')); print('flattened faces', n)
         used = {MATS[k]['tex'] for k in set(g) | {k for p in lib.values() for _, k in p} if MATS[k]['tex']}
         for t in used: shutil.copy(os.path.join(TEXD, t), os.path.join(dd, 'textures', t))
         print('dae faces', sum(len(m.faces) for m in g.values()), 'MB', os.path.getsize(os.path.join(dd, 'titik-temu.dae')) / 1e6, 'textures', n, round(time.time() - t0), 's')
